@@ -93,66 +93,9 @@ public class MyService extends Service {
         }
 
         else if (intent.getAction().equals(ACTION_DISCOVER_SERVICES)) {
-            Log.i(LOG_TAG, "Inizio la ricerca dei servizi nelle vicinanze.");
 
-            //Registra la richiesta
-            WifiP2pDnsSdServiceRequest serviceRequest = WifiP2pDnsSdServiceRequest.newInstance();
-
-            //Per sicurezza, rimuovi ogni richiesta dal WifiP2pManager
-            mManager.clearServiceRequests(mChannel, new WifiP2pManager.ActionListener() {
-                @Override
-                public void onSuccess() {
-                    //Tutto ok. Nulla da fare
-                    Log.i(LOG_TAG, "Ho interrotto la ricerca precedente e ne inizio una nuova.");
-                }
-
-                @Override
-                public void onFailure(int reason) {
-                    Log.e(LOG_TAG, "Impossibile rimuovere le richieste di servizio dal manager: clearServiceRequest failed.");
-                }
-            });
-
-            mManager.addServiceRequest(mChannel, serviceRequest, new WifiP2pManager.ActionListener() {
-                @Override
-                public void onSuccess() {
-                    //Tutto ok. Nulla da fare.
-                    Log.i(LOG_TAG, "Service request aggiunto con successo.");
-                }
-
-                @Override
-                public void onFailure(int reason) {
-                    Log.e(LOG_TAG, "Impossibile ottenere le informazioni di connessione: AddServiceRequest failed");
-                }
-            });
-
-            //Avvia la ricerca di dispositivi nelle vicinanze con lo stesso servizio WiChat
-            mManager.discoverServices(mChannel, new WifiP2pManager.ActionListener() {
-                @Override
-                public void onSuccess() {
-                    //Tutto bene. Nulla da fare.
-                    Log.i(LOG_TAG, "Ricerca dispositivi avviata.");
-                }
-
-                @Override
-                public void onFailure(int reason) {
-
-                    //Si è verificato un errore. Esso verrà registrato nel Log.
-                    String errore = null;
-                    switch (reason) {
-                        case WifiP2pManager.P2P_UNSUPPORTED:
-                            errore = "Wi-Fi P2P non supportato da questo dispositivo.";
-                            break;
-                        case WifiP2pManager.BUSY:
-                            errore = "sistema troppo occupato per elaborare la richiesta.";
-                            break;
-                        default:
-                            errore = "si è verificato un errore durante la registrazione del servizio WiChat.";
-                            break;
-                    }
-
-                    Log.e(LOG_TAG, "Impossibile iniziare la ricerca dei peers: " + errore);
-                }
-            });
+            //Semplicemente chiama il metodo privato per la ricerca dei dispositivi nelle vicinanze
+            discoverServices();
         }
 
         else if (intent.getAction().equals(ACTION_UNREGISTER_CONTACTS_LISTENER)) {
@@ -166,6 +109,73 @@ public class MyService extends Service {
     @Override
     public IBinder onBind(Intent intent) {
         return null;
+    }
+
+    /**
+     * Questo metodo si occupa di avviare la ricerca dei dispositivi
+     * nelle vicinanze che hanno installato WiChat.
+     */
+    private void discoverServices() {
+        Log.i(LOG_TAG, "Inizio la ricerca dei servizi nelle vicinanze.");
+
+        //Registra la richiesta
+        WifiP2pDnsSdServiceRequest serviceRequest = WifiP2pDnsSdServiceRequest.newInstance();
+
+        //Per sicurezza, rimuovi ogni richiesta dal WifiP2pManager
+        mManager.clearServiceRequests(mChannel, new WifiP2pManager.ActionListener() {
+            @Override
+            public void onSuccess() {
+                //Tutto ok. Nulla da fare
+                Log.i(LOG_TAG, "Ho interrotto la ricerca precedente e ne inizio una nuova.");
+            }
+
+            @Override
+            public void onFailure(int reason) {
+                Log.e(LOG_TAG, "Impossibile rimuovere le richieste di servizio dal manager: clearServiceRequest failed.");
+            }
+        });
+
+        mManager.addServiceRequest(mChannel, serviceRequest, new WifiP2pManager.ActionListener() {
+            @Override
+            public void onSuccess() {
+                //Tutto ok. Nulla da fare.
+                Log.i(LOG_TAG, "Service request aggiunto con successo.");
+            }
+
+            @Override
+            public void onFailure(int reason) {
+                Log.e(LOG_TAG, "Impossibile ottenere le informazioni di connessione: AddServiceRequest failed");
+            }
+        });
+
+        //Avvia la ricerca di dispositivi nelle vicinanze con lo stesso servizio WiChat
+        mManager.discoverServices(mChannel, new WifiP2pManager.ActionListener() {
+            @Override
+            public void onSuccess() {
+                //Tutto bene. Nulla da fare.
+                Log.i(LOG_TAG, "Ricerca dispositivi avviata.");
+            }
+
+            @Override
+            public void onFailure(int reason) {
+
+                //Si è verificato un errore. Esso verrà registrato nel Log.
+                String errore = null;
+                switch (reason) {
+                    case WifiP2pManager.P2P_UNSUPPORTED:
+                        errore = "Wi-Fi P2P non supportato da questo dispositivo.";
+                        break;
+                    case WifiP2pManager.BUSY:
+                        errore = "sistema troppo occupato per elaborare la richiesta.";
+                        break;
+                    default:
+                        errore = "si è verificato un errore durante la registrazione del servizio WiChat.";
+                        break;
+                }
+
+                Log.e(LOG_TAG, "Impossibile iniziare la ricerca dei peers: " + errore);
+            }
+        });
     }
 
     /**
@@ -196,7 +206,7 @@ public class MyService extends Service {
             public void onDnsSdTxtRecordAvailable(String fullDomainName, Map<String, String> txtRecordMap, WifiP2pDevice srcDevice) {
                 Log.i(LOG_TAG, "Catturato un TXT Record. fullDomainName = " + fullDomainName);
 
-                if (fullDomainName.contains(SERVICE_NAME)) {
+                if (fullDomainName.contains(SERVICE_NAME.toLowerCase())) {
                     buddies.put(srcDevice.deviceAddress, txtRecordMap.get(NICKNAME));
                     servicesConnectionInfo.put(srcDevice.deviceAddress, Integer.parseInt(txtRecordMap.get(LISTEN_PORT)));
                     Log.i(LOG_TAG, "Informazioni del TXT Record memorizzate correttamente.");
@@ -290,6 +300,10 @@ public class MyService extends Service {
             //Registra i listener per i TXT record e per i servizi provenienti dai dispositivi in vicinanza
             mManager.setDnsSdResponseListeners(mChannel, serviceListener, txtRecordListener);
 
+            //Avvia la ricerca dei dispositivi nelle vicinanze (a quanto pare, se il dispositivo non inizia la ricerca, esso stesso non può
+            //essere rilevato dagli altri dispositivi).
+            discoverServices();
+
             //Avvia l'ascolto di connessioni in entrata
             while (!Thread.currentThread().isInterrupted()) {
                 Log.i(LOG_TAG, "Sono nel ciclo while del NsdProviderThread.");
@@ -314,6 +328,7 @@ public class MyService extends Service {
                 }*/
 
             }
+            Log.i(LOG_TAG, "NsdProviderThread fuori dal ciclo while.");
             try {
                 server.close();
             }
