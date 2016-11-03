@@ -2,8 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.sms1516.porcelli.daniele.bootservicetest">
 
-    <uses-permission
-        android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission
         android:name="android.permission.ACCESS_WIFI_STATE"
         android:required="true" />
@@ -13,9 +12,16 @@
     <uses-permission
         android:name="android.permission.INTERNET"
         android:required="true" />
+    <uses-permission
+        android:name="android.permission.ACCESS_NETWORK_STATE"
+        android:required="true" />
+    <uses-permission
+        android:name="android.permission.CHANGE_NETWORK_STATE"
+        android:required="true" />
 
     <!-- Questi permessi servono per leggere il nome del proprietario del dispositivo -->
-    <uses-permission android:name="android.permission.READ_PROFILE"
+    <uses-permission
+        android:name="android.permission.READ_PROFILE"
         android:required="true" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
 
@@ -35,8 +41,8 @@
 
         <receiver
             android:name=".BootReceiver"
-            android:exported="true"
-            android:enabled="true">
+            android:enabled="true"
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.REBOOT" />
@@ -45,10 +51,11 @@
         </receiver>
 
         <service
-            android:name="com.sms1516.porcelli.daniele.bootservicetest.MyService"
-            android:exported="true">
-        </service>
+            android:name=".MyService"
+            android:exported="true"></service>
 
+        <activity android:name=".ConversationActivity"
+            android:theme="@style/ConversationActivityTheme"></activity>
     </application>
 
 </manifest>
