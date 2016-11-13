@@ -27,6 +27,7 @@ import java.util.HashMap;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.BufferedReader;
@@ -40,6 +41,7 @@ import java.util.concurrent.ArrayBlockingQueue;
 public class MyService extends Service {
 
     private static final String LOG_TAG = MyService.class.getName();
+    private static final int PORT = 6770;
 
     //Costanti per le azioni e i parametri degli intent
     private static final String ACTION_REGISTER_CONTACTS_LISTENER = "com.sms1516.porcelli.daniele.wichat.action.REGISTER_CONTACTS_LISTENER";
@@ -49,6 +51,8 @@ public class MyService extends Service {
 
     private static final String ACTION_CONNECT_TO_CLIENT = "com.sms1516.porcelli.daniele.wichat.action.CONNECT_TO_CLIENT";
     private static final String ACTION_CONNECT_TO_CLIENT_EXTRA = "com.sms1516.porcelli.daniele.wichat.extra.DEVICE";
+
+    private static final String ACTION_DISCONNECT = "com.sms1516.porcelli.daniele.wichat.action.DISCONNECT";
 
     private static final String ACTION_REGISTER_MESSAGES_LISTENER = "com.sms1516.porcelli.daniele.wichat.action.REGISTER_MESSAGES_LISTENER";
     private static final String ACTION_REGISTER_MESSAGES_LISTENER_EXTRA = "com.sms1516.porcelli.daniele.wichat.action.REGISTER_MESSAGES_LISTENER";
@@ -65,16 +69,25 @@ public class MyService extends Service {
     private BroadcastReceiver mReceiver;
     private LocalBroadcastManager mLocalBroadcastManager;
     private IntentFilter mIntentFilter;
-    private String thisDeviceMAC;
     private String conversingWith;  //Memorizzerà l'indirizzo MAC del dispositivo con cui l'utente sta conversando in questo momento
+    private InetAddress remoteDeviceIPAddress;  //Memorizzerà l'indirizzo IP del dispositivo remoto
     private Thread mNsdService;
+    private Thread serverThread;
+    private ConnectThread connectThread;
     private boolean mContactsListener;
     private boolean mMessagesListener;
-    private Map<String, Integer> servicesConnectionInfo = new HashMap<>();
-    private List<ChatConnection> connections = new ArrayList<>();
+    private boolean mIRequested;    //Memorizzerà lo stato che indica se è stato l'utente a richiedere la connessione oppure no.
+    private String thisDeviceAddress;
+    //private Map<String, Integer> servicesConnectionInfo = new HashMap<>();
+    //private List<ChatConnection> connections = new ArrayList<>();
+    private ChatConnection currentConnection;
 
     //Testo per identificare il messaggio dummy
-    private static final String DUMMY_MESSAGE ="!DUMMYMESSAGE";
+    //private static final String DUMMY_MESSAGE ="!DUMMYMESSAGE";
+
+    //Dizionario che conserva le coppie (indirizzo, nome) per l'associazione di un
+    //nome più amichevole al dispositivo individuato
+    private final HashMap<String, String> buddies = new HashMap<>();
 
 
     @Override
@@ -125,36 +138,32 @@ public class MyService extends Service {
         else if (intent.getAction().equals(ACTION_CONNECT_TO_CLIENT)) {
             Log.i(LOG_TAG, "Mi sto connettendo con il dispositivo remoto.");
 
+            mIRequested = true;
+
             //Recupera l'indirizzo MAC del dispositivo a cui connettersi
             final String device = intent.getStringExtra(ACTION_CONNECT_TO_CLIENT_EXTRA);
 
-            //Controlla che non ci sia già una connessione con il dispositivo remoto
-            boolean alreadyConnected = false;
-
-            for (ChatConnection chatConnection: connections) {
-                if (chatConnection.getMacAddress().equals(device)) {
-                    alreadyConnected = true;
-                    break;
-                }
-            }
-
-            //Se non è stata trovata una connessione esistente con il dispositivo, la crea
-            if (!alreadyConnected) {
+            //Controlla che non ci sia già una connessione con un dispositivo remoto
+            //Se non è stata trovata una connessione esistente con un dispositivo, la crea
+            if (conversingWith == null && remoteDeviceIPAddress == null) {
 
                 //Si connette con il dispositivo tramite Wi-Fi direct
                 WifiP2pConfig config = new WifiP2pConfig();
                 config.deviceAddress = device;
                 config.wps.setup = WpsInfo.PBC;
 
-                //Imposta il dispositivo da connettersi nel BroadcastReceiver
-                ((WifiP2pBroadcastReceiver) mReceiver).setDeviceToConnect(device);
-
+                //Chiama il metodo di WifiP2pManager per stabilire una connessione Wi-Fi Direct con il dispositivo remoto.
                 mManager.connect(mChannel, config, new WifiP2pManager.ActionListener() {
                     @Override
                     public void onSuccess() {
                         //Viene mandato l'intent di broadcast WIFI_P2P_CONNECTION_CHANGED_ACTION
 
+                        //Imposta conversingWith con l'indirizzo MAC del dispositivo remoto che l'utente
+                        //ha cliccato.
+                        conversingWith = device;
+
                         Log.i(LOG_TAG, "Sono riuscito a connettermi con il dispositivo remoto. Aspetto le informazioni di connessione.");
+
                     }
 
                     @Override
@@ -171,22 +180,64 @@ public class MyService extends Service {
 
                     }
                 });
+            } else if (conversingWith != null && !Utils.isMacSimilar(conversingWith, device)) {
+
+                //Invia l'intent per richiedere la disconnessione dal dispositivo corrente
+                Intent disconnectIntent = new Intent(CostantKeys.ACTION_SEND_DISCONNECT_REQUEST);
+                disconnectIntent.putExtra(CostantKeys.ACTION_SEND_DISCONNECT_REQUEST_EXTRA, conversingWith);
+                mLocalBroadcastManager.sendBroadcast(disconnectIntent);
             }
 
-            else {
-                //Invia l'intent per notificare che il dispositivo è già connesso
-                Intent deviceConnectedIntent = new Intent(CostantKeys.ACTION_CONNECTED_TO_DEVICE);
-                deviceConnectedIntent.putExtra(CostantKeys.ACTION_CONNECTED_TO_DEVICE_EXTRA, device);
-                conversingWith = device;
-                mLocalBroadcastManager.sendBroadcast(deviceConnectedIntent);
+            else if (Utils.isMacSimilar(conversingWith, device) && currentConnection != null) {
+
+                //L'utente ha cliccato su un contatto con cui ha già stabilito una connessione,
+                //quindi avvisa l'activity.
+                Intent connectedIntent = new Intent(CostantKeys.ACTION_CONNECTED_TO_DEVICE);
+                connectedIntent.putExtra(CostantKeys.ACTION_CONNECTED_TO_DEVICE_EXTRA, conversingWith);
+                mLocalBroadcastManager.sendBroadcast(connectedIntent);
+
             }
+        }
+
+        else if (intent.getAction().equals(ACTION_DISCONNECT)) {
+            Log.i(LOG_TAG, "Il Service ha ricevuto la richiesta di disconnessione.");
+
+            //Invoca il metodo per disconnettere la connessione con il dispositivo
+            //remoto attuale (se presente)
+            if (conversingWith != null) {
+                Log.i(LOG_TAG, "Eseguo la disconnessione.");
+                Log.i(LOG_TAG, "Chiudo la ChatConnection.");
+
+                if (currentConnection != null) {
+                    currentConnection.closeConnection();
+                    currentConnection = null;
+                    Log.i(LOG_TAG, "ChatConnection chiusa.");
+                }
+
+                remoteDeviceIPAddress = null;
+                conversingWith = null;
+
+                mManager.removeGroup(mChannel, new WifiP2pManager.ActionListener() {
+
+                    @Override
+                    public void onSuccess() {
+                        Log.i(LOG_TAG, "Connessione Wi-Fi Direct chiusa.");
+                    }
+
+                    @Override
+                    public void onFailure(int reasonCode) {
+                        Log.i(LOG_TAG, "Disconnessione fallita: " + reasonCode);
+                    }
+                });
+            }
+            else
+                Log.i(LOG_TAG, "Disconnessione non eseguita: conversingWith è null.");
         }
 
         else if (intent.getAction().equals(ACTION_REGISTER_MESSAGES_LISTENER)) {
 
             //Registra il MessagesListener
             mMessagesListener = true;
-            conversingWith = (String) intent.getSerializableExtra(ACTION_REGISTER_MESSAGES_LISTENER_EXTRA);
 
             Log.i(LOG_TAG, "Messages Listener registrato.");
         }
@@ -204,20 +255,13 @@ public class MyService extends Service {
             //Recupera il messaggio da inviare
             Message message = (Message) intent.getSerializableExtra(ACTION_SEND_MESSAGE_EXTRA);
 
-            boolean messageSent = false;
-
-            //Cerca la connessione con il dato destinatario
-            for (ChatConnection conn : connections) {
-                if (conn.getMacAddress().equals(conversingWith)) {
-
-                    //Invia il messaggio a questa connessione
-                    conn.sendMessage(message);
-                    messageSent = true;
-                }
+            if (currentConnection != null) {
+                //Invia il messaggio composto dall'utente
+                Log.i(LOG_TAG, "Invio il messaggio.");
+                currentConnection.sendMessage(message);
             }
-
-            if (!messageSent)
-                Log.e(LOG_TAG, "Messaggio non inviato: non esiste alcuna connessione con " + conversingWith);
+            else
+                Log.i(LOG_TAG, "Non è stato possibile inviare il messaggio: non c'è alcuna connessione.");
         }
 
         else if (intent.getAction().equals(ACTION_CHECK_CONTACT_AVAILABLE)) {
@@ -321,9 +365,7 @@ public class MyService extends Service {
         //Costante del nome del servizio
         private static final String SERVICE_NAME = "WiChat";
 
-        //Dizionario che conserva le coppie (indirizzo, nome) per l'associazione di un
-        //nome più amichevole al dispositivo individuato
-        private final HashMap<String, String> buddies = new HashMap<>();
+        ServerSocket server;
 
         //Implementazione del listener dei TXT record
         private final WifiP2pManager.DnsSdTxtRecordListener txtRecordListener = new WifiP2pManager.DnsSdTxtRecordListener() {
@@ -334,7 +376,7 @@ public class MyService extends Service {
 
                 if (fullDomainName.contains(SERVICE_NAME.toLowerCase())) {
                     buddies.put(srcDevice.deviceAddress, txtRecordMap.get(NICKNAME));
-                    servicesConnectionInfo.put(srcDevice.deviceAddress, Integer.parseInt(txtRecordMap.get(LISTEN_PORT)));
+                    //servicesConnectionInfo.put(srcDevice.deviceAddress, Integer.parseInt(txtRecordMap.get(LISTEN_PORT)));
                     Log.i(LOG_TAG, "Informazioni del TXT Record memorizzate correttamente.");
                 }
             }
@@ -368,17 +410,27 @@ public class MyService extends Service {
         public void run() {
             Log.i(LOG_TAG, "Sto eseguendo il NsdProviderThread.");
 
-            //Ottiene il numero della prima porta disponibile
-            ServerSocket server;
-            try {
-                server = new ServerSocket(0);
+            /*try {
+
+                server = new ServerSocket(6770);
+
             } catch (IOException ex) {
                 Log.e(LOG_TAG, "Impossibile avviare il server: " + ex.toString());
                 return;
-            }
+            }*/
 
-            int port = server.getLocalPort();
-            Log.i(LOG_TAG, "Ho creato il server. Porta: " + port);
+            /*int port = server.getLocalPort();
+            Log.i(LOG_TAG, "Ho creato il server. Porta: " + port);*/
+
+            //Log.i(LOG_TAG, "Indirizzo IP di questo dispositivo: " + server.getInetAddress().toString());
+
+            //Recupera l'indirizzo MAC di questo dispositivo per inserirlo nei messaggi che invierà
+            Log.i(LOG_TAG, "Recupero l'indirizzo MAC del dispositivo.");
+
+            WifiManager wifiManager = (WifiManager) getSystemService(Context.WIFI_SERVICE);
+            WifiInfo info = wifiManager.getConnectionInfo();
+            thisDeviceAddress = info.getMacAddress().toLowerCase();
+            Log.i(LOG_TAG, "Indirizzo MAC di questo dispositivo nel Service: " + thisDeviceAddress);
 
             //Ottiene il nome del proprietario di questo dispositivo Android
             Cursor cursor = getContentResolver().query(Profile.CONTENT_URI, null, null, null, null);
@@ -389,7 +441,7 @@ public class MyService extends Service {
 
             //Crea il TXT record da inviare agli altri dispositivi che hanno installato WiChat
             Map<String, String> txtRecord = new HashMap<>();
-            txtRecord.put(LISTEN_PORT, String.valueOf(port));
+            //txtRecord.put(LISTEN_PORT, String.valueOf(PORT));
             txtRecord.put(NICKNAME, proprietario);
 
             //Crea l'oggetto che conterrà le informazioni riguardo il servizio
@@ -431,7 +483,8 @@ public class MyService extends Service {
             discoverServices();
 
             //Avvia l'ascolto di connessioni in entrata
-            while (!Thread.currentThread().isInterrupted()) {
+            //Nota: commentato perché è stato messo in un thread apposito
+            /*while (!Thread.currentThread().isInterrupted()) {
                 Log.i(LOG_TAG, "Sono nel ciclo while del NsdProviderThread.");
                 Socket clientSocket = null;
                 try {
@@ -457,24 +510,26 @@ public class MyService extends Service {
                     continue;
                 }
 
-            }
-            Log.i(LOG_TAG, "NsdProviderThread fuori dal ciclo while.");
+            }*/
+            /*Log.i(LOG_TAG, "NsdProviderThread fuori dal ciclo while.");
             try {
                 server.close();
             }
             catch(IOException ex) {
                 //Niente di importante da fare.
-            }
+            }*/
+
+            //Crea e avvia il server
+            serverThread = new StartServerThread();
+            serverThread.start();
         }
+
+        /*public String getIPAddress() {
+            return server.getInetAddress().toString();
+        }*/
     }
 
     private class WifiP2pBroadcastReceiver extends BroadcastReceiver {
-
-        //Variabile per tener traccia del dispositivo a cui si sta connettendo.
-        //L'ho inserito per poter ottenere l'indirizzo IP del dispositivo quando
-        //viene chiamato requestConnectionInfo() dopo aver ricevuto l'intent di
-        //broadcast WIFI_P2P_CONNECTION_CHANGED_ACTION
-        private String device;
 
         //Implementazione del ConnectionInfoListener per recuperare l'indirizzo IP
         //del dispositivo a cui si è appena connessi
@@ -484,82 +539,37 @@ public class MyService extends Service {
             public void onConnectionInfoAvailable(WifiP2pInfo info) {
                 Log.i(LOG_TAG, "Sono in onConnectionInfoAvailable(). Informazioni sulla connessione catturate.");
 
-                //Ottieni l'indirizzo IP
-                InetAddress deviceIP = info.groupOwnerAddress;
+                //Recupero l'indirizzo IP di questo dispositivo
+                InetAddress localIp = Utils.getLocalIPAddress();
+                Log.i(LOG_TAG, "L'indirizzo IP di questo dispositivo recuperato è: " + localIp.getHostAddress());
 
-                //Controlla se l'indirizzo MAC del dispositivo remoto a cui connettersi
-                //è stato impostato. Se non è stato impostato, vuol dire che la connessione che
-                //l'intent di broadcast WIFI_P2P_CONNECTION_CHANGED_ACTION è stato intercettato
-                //per via di una connessione in entrata da parte di un dispositivo remoto.
-                if (device == null) {
+                //Controlla se l'indirizzo IP locale recuperato è uguale a quello
+                //del group owner. Nel caso in cui non siano uguali, allora deve
+                //avviare la connessione tramite socket all'indirizzo IP del group
+                //owner. Se, invece, sono uguali, rimane in attesa di una connessione
+                //tramite socket da parte del dispositivo remoto.
+                if (!info.groupOwnerAddress.equals(localIp)) {
 
-                    //Esci dal metodo onConnectionInfoAvailable()
-                    Log.i(LOG_TAG, "Ricevuta una connessione da parte di un dispositivo remoto. Esco da onConnectionInfoAvailable().");
-                    return;
+                    remoteDeviceIPAddress = info.groupOwnerAddress;
+
+                    //Un dispositivo remoto si è connesso al nostro.
+                    Log.i(LOG_TAG, "Mi connetto con il group owner: " + remoteDeviceIPAddress.getHostAddress());
+
+                    //Connettiti al dispositivo remoto che si è appena connesso a questo dispositivo
+                    Log.i(LOG_TAG, "Ora avvio ConnectThread.");
+
+                    connectThread = new ConnectThread();
+                    connectThread.start();
+
                 }
 
-                //Ottieni la porta del servizio remoto
-                int port = servicesConnectionInfo.get(device);
-                Log.i(LOG_TAG, "Porta del dispositivo remoto: " + port);
+                else {
 
-                //Crea e avvia la connessione
-                ConnectThread connectThread = new ConnectThread(deviceIP, port, device);
-                connectThread.start();
-
-                //Memorizza l'indirizzo MAC del dispositivo con il quale si vuole comunicare
-                conversingWith = device;
-
-                device = null;
-            }
-
-            /**
-             * Questo metodo ha lo scopo di recuperare l'indirizzo MAC del dispositivo il cui indirizzo IP
-             * è stato appena ottenuto nel metodo onConnectionInfoAvailable().
-             *
-             * Fonte: http://www.flattermann.net/2011/02/android-howto-find-the-hardware-mac-address-of-a-remote-host/
-             *
-             * @param ip L'indirizzo IP del dispositivo remoto di cui si vuole conoscere l'indirizzo MAC.
-             * @return L'indirizzo MAC del dispositivo remoto sotto forma di stringa.
-             */
-            private String getMAC(String ip) {
-                BufferedReader br = null;
-
-                try {
-                    br = new BufferedReader(new FileReader("/proc/net/arp"));
-                    String line = null;
-
-                    while ((line = br.readLine()) != null) {
-                        String[] splitted = line.split(" +");
-
-                        if (splitted != null && splitted.length >= 4 && ip.equals(splitted[0])) {
-
-                            // Basic sanity check
-                            String mac = splitted[3];
-
-                            if (mac.matches("..:..:..:..:..:..")) {
-                                return mac;
-
-                            } else {
-                                return null;
-                            }
-                        }
-                    }
-
-                } catch (Exception e) {
-                    e.printStackTrace();
-
-                } finally {
-
-                    try {
-                        br.close();
-
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    }
+                    Log.i(LOG_TAG, "Sono io il group owner. Attendo la connessione socket.");
                 }
-                return null;
 
             }
+
         };
 
         @Override
@@ -575,18 +585,6 @@ public class MyService extends Service {
                 int statoWiFi = intent.getIntExtra(WifiP2pManager.EXTRA_WIFI_STATE, -1);
                 if (statoWiFi == WifiP2pManager.WIFI_P2P_STATE_ENABLED) {
                     Log.i(LOG_TAG, "Il Wi-Fi P2P è abilitato su questo dispositivo.");
-
-                    if (thisDeviceMAC == null) {
-
-                        //Ottiene l'indirizzo MAC di questo dispositivo
-                        Log.i(LOG_TAG, "Recupero l'indirizzo MAC del dispositivo.");
-
-                        WifiManager wifiManager = (WifiManager) getSystemService(Context.WIFI_SERVICE);
-                        WifiInfo info = wifiManager.getConnectionInfo();
-                        thisDeviceMAC = info.getMacAddress();
-
-                        Log.i(LOG_TAG, "Indirizzo MAC recuperato: " + thisDeviceMAC);
-                    }
 
                     //Avvia il thread per l'NSD
                     mNsdService = new NsdProviderThread();
@@ -604,7 +602,7 @@ public class MyService extends Service {
                 }
             } else if (action.equals(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION)) {
 
-                //Questo dispositivo si è appena connesso con un altro tramite Wi-Fi direct.
+                //Questo dispositivo si è appena connesso/disconnesso con un altro tramite Wi-Fi Direct.
                 //Recuperiamo le informazioni di connessione di conseguenza.
                 if (mManager == null) {
                     return;
@@ -615,8 +613,46 @@ public class MyService extends Service {
                 if (networkInfo.isConnected()) {
                     Log.i(LOG_TAG, "Il dispositivo si è connesso con un dispositivo remoto.");
 
-                    //Si è appena connesso al dispositivo remoto, otteniamo le informazioni della connessione
+                    //Si è appena connesso ad un dispositivo remoto: otteniamo le informazioni della connessione
                     mManager.requestConnectionInfo(mChannel, connectionInfoListener);
+                }
+                else {
+                    //Si tratta di una disconnessione dal dispositivo remoto.
+                    Log.i(LOG_TAG, "Dispositivo remoto si è disconnesso.");
+
+                    if (currentConnection != null) {
+                        Log.i(LOG_TAG, "Imposto il currentConnection a null.");
+                        currentConnection = null;
+                    }
+
+                    //Riavvia il serverThread se è interrotto
+                    if (serverThread != null && !serverThread.isAlive()) {
+                        Log.i(LOG_TAG, "Riavvio il serverThread.");
+
+                        serverThread = new StartServerThread();
+                        serverThread.start();
+                    }
+
+                    remoteDeviceIPAddress = null;
+
+                    if (conversingWith != null) {
+
+                        //Avvisa l'activity dei contatti che il dispositivo remoto ha chiuso la connessione
+                        if (mContactsListener) {
+                            Intent contactDisconnectedIntent = new Intent(CostantKeys.ACTION_CONTACT_DISCONNECTED_FOR_CONTACTS);
+                            contactDisconnectedIntent.putExtra(CostantKeys.ACTION_CONTACT_DISCONNECTED_FOR_CONTACTS_EXTRA, conversingWith);
+                            mLocalBroadcastManager.sendBroadcast(contactDisconnectedIntent);
+                        }
+
+                        //Avvisa l'activity/fragment della conversazione che il dispositivo remoto ha chiuso la connessione
+                        if (mMessagesListener) {
+                            Intent contactDisconnectedIntent = new Intent(CostantKeys.ACTION_CONTACT_DISCONNECTED);
+                            mLocalBroadcastManager.sendBroadcast(contactDisconnectedIntent);
+                        }
+
+                        conversingWith = null;
+                    }
+
                 }
             } else if (action.equals(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION)) {
 
@@ -625,16 +661,6 @@ public class MyService extends Service {
                 //mManager.requestPeers(mChannel, peerListListener);
             }
 
-        }
-
-        /**
-         * Metodo invocato quando si vuole impostare il dispositivo di cui
-         * si vuole ricavare l'indirizzo IP per il socket.
-         *
-         * @param device L'indirizzo MAC del dispositivo a cui ci si sta connettendo.
-         */
-        public void setDeviceToConnect(String device) {
-            this.device = device;
         }
     }
 
@@ -649,9 +675,11 @@ public class MyService extends Service {
 
         //Variabili d'istanza
         private Socket connSocket;
-        private String macAddress;
+        //private String macAddress;
         private SendingThread sendingThread;
         private ReceivingThread receivingThread;
+
+        private static final int TIMEOUT = 5000;
 
         /**
          * Costruttore invocato dal server.
@@ -662,14 +690,25 @@ public class MyService extends Service {
             Log.i(LOG_TAG, "Sono nel costruttore di ChatConnection per le connessioni ricevute.");
 
             connSocket = socket;
+            Log.i(LOG_TAG, "Ho impostato connSocket.");
+
+            Log.i(LOG_TAG, "Recupero l'indirizzo IP del dispositivo remoto al quale la socket è connessa.");
+            remoteDeviceIPAddress = connSocket.getInetAddress();
+
+            Log.i(LOG_TAG, "Indirizzo IP del dispositivo remoto: " + remoteDeviceIPAddress.getHostAddress());
 
             //Crea il thread per la ricezione dei messaggi
+            Log.i(LOG_TAG, "Creo l'istanza di ReceivingThread.");
             receivingThread = new ReceivingThread();
 
             //Crea il thread per l'invio dei messaggi
+            Log.i(LOG_TAG, "Creo l'istanza di SendingThread.");
             sendingThread = new SendingThread();
 
+            Log.i(LOG_TAG, "Avvio ReceivingThread.");
             receivingThread.start();
+
+            Log.i(LOG_TAG, "Avvio SendingThread.");
             sendingThread.start();
         }
 
@@ -677,20 +716,22 @@ public class MyService extends Service {
          * Costruttore invocato quando si vuole instaurare una
          * connessione con il server del dispositivo remoto.
          *
-         * @param srvAddress L'indirizzo IP del dispositivo che ospita il server.
-         * @param srvPort    La porta sul quale è in ascolto il server.
-         * @param macAddress L'indirizzo MAC del dispositivo remoto in forma testuale.
          */
-        public ChatConnection(InetAddress srvAddress, int srvPort, String macAddress) throws IOException {
+        public ChatConnection(/*InetAddress srvAddress, int srvPort, String macAddress*/) throws IOException {
             Log.i(LOG_TAG, "Sono nel costruttore di ChatConnection per le connessioni da effetturare.");
 
             //Poiché non è possibile eseguire operazioni di rete nel thread principale
             //dell'applicazione, il codice di questo costruttore viene eseguito in un thread
             //a parte, altrimenti verrà lanciata un'eccezione di tipo: android.os.NetworkOnMainThreadException.
 
-            connSocket = new Socket(srvAddress, srvPort);
+            connSocket = new Socket();
+            Log.i(LOG_TAG, "Socket inizializzata.");
 
-            this.macAddress = macAddress;
+            connSocket.bind(null);
+            Log.i(LOG_TAG, "Socket legata ad un IP e ad una porta.");
+
+            connSocket.connect(new InetSocketAddress(remoteDeviceIPAddress, PORT), TIMEOUT);
+            Log.i(LOG_TAG, "Socket connessa.");
 
             //Crea il thread per la ricezione dei messaggi
             receivingThread = new ReceivingThread();
@@ -700,8 +741,8 @@ public class MyService extends Service {
 
             receivingThread.start();
             sendingThread.start();
-        }
 
+        }
 
         /**
          * Spedisce il messaggio al thread designato all'invio dei messaggi (SendingThread).
@@ -728,9 +769,9 @@ public class MyService extends Service {
          *
          * @return L'indirizzo MAC del dispositivo remoto in forma di stringa.
          */
-        public String getMacAddress() {
+        /*public String getMacAddress() {
             return macAddress;
-        }
+        }*/
 
         /**
          * Classe interna che rappresenta il thread che si mette in ascolto
@@ -748,16 +789,17 @@ public class MyService extends Service {
              */
 
             public ReceivingThread() throws IOException {
-
-                objectInputStream = new ObjectInputStream(connSocket.getInputStream());
-                Log.i(LOG_TAG, "Costruito thread per la ricezione dei messaggi provenienti dal dispositivo remoto.");
+                Log.i(LOG_TAG, "Sono nel costruttore di ReceivingThread.");
 
             }
 
             @Override
             public void run() {
                 try {
-                    Log.i(LOG_TAG, "Sono dentro al ReceivingThread.");
+                    Log.i(LOG_TAG, "Sono dentro al run() di ReceivingThread.");
+
+                    objectInputStream = new ObjectInputStream(connSocket.getInputStream());
+                    Log.i(LOG_TAG, "Costruito thread per la ricezione dei messaggi provenienti dal dispositivo remoto.");
 
                     while (!Thread.currentThread().isInterrupted()) {
                         try {
@@ -767,13 +809,22 @@ public class MyService extends Service {
                             Log.i(LOG_TAG, "ReceivingThread ha ricevuto un messaggio.");
 
                             if (message != null) {
-                                if (macAddress == null)
-                                    macAddress = message.getSender();
+                                /*if (conversingWith == null) {
+                                    conversingWith = message.getSender();
+                                    Log.i(LOG_TAG, "Ottenuto messaggio DUMMY. conversingWith = " + conversingWith);
 
-                                if (!message.getText().equals(DUMMY_MESSAGE)) {
+                                    //Invia l'intent all'activity dei contatti per informagli che la connessione tramite
+                                    //socket è stata stabilita e che può, quindi, proseguire con l'avvio dell'activity/fragment
+                                    //per la conversazione.
+                                    Intent connectedIntent = new Intent(CostantKeys.ACTION_CONNECTION_RECEIVED);
+                                    connectedIntent.putExtra(CostantKeys.ACTION_CONNECTION_RECEIVED_EXTRA, conversingWith);
+                                    mLocalBroadcastManager.sendBroadcast(connectedIntent);
+                                }*/
+
+                                //if (!message.getText().equals(DUMMY_MESSAGE)) {
 
                                     //Manda il messaggio all'activity/fragment interessata se è registrata
-                                    if (mMessagesListener && conversingWith.equals(macAddress)) {
+                                    if (mMessagesListener) {
                                         Intent intent = new Intent(CostantKeys.ACTION_SEND_MESSAGE);
                                         intent.putExtra(CostantKeys.ACTION_SEND_MESSAGE_EXTRA, message);
                                         mLocalBroadcastManager.sendBroadcast(intent);
@@ -797,7 +848,7 @@ public class MyService extends Service {
                                         //Salva il messaggio nella memoria interna e nient'altro
                                         //mMessagesStore.saveMessage(message);
                                     }
-                                }
+                                //}
                             }
 
                         } catch (ClassNotFoundException ex) {
@@ -844,43 +895,62 @@ public class MyService extends Service {
              * @Throws IOException se non riesce ad inizializzare lo stream di output.
              */
             public SendingThread() throws IOException {
-                Log.i(LOG_TAG, "Sono nel costruttore del thread di invio dei messaggi al dispositivo remoto.");
+                Log.i(LOG_TAG, "Sono nel costruttore di SendingThread.");
 
                 //Inizializza la coda dei messaggi da inviare
                 messagesQueue = new ArrayBlockingQueue<Message>(QUEUE_CAPACITY);
 
-                //Inizializza lo stream di output
-                oos = new ObjectOutputStream(connSocket.getOutputStream());
             }
 
             @Override
             public void run() {
                 Log.i(LOG_TAG, "Sono dentro al SendingThread.");
-                while (!Thread.currentThread().isInterrupted()) {
-                    try {
-                        //Rimane in ascolto per eventuali messaggi da inviare
-                        Message messageToSend = messagesQueue.take();
 
-                        //Manda il messaggio appena ottenuto dalla coda dei messaggi
-                        oos.writeObject(messageToSend);
-                        Log.i(LOG_TAG, "Messaggio inviato.");
+                try {
 
-                    } catch (IOException ex) {
-                        //Errore durante l'invio del messaggio prelevato
-                        Log.e(LOG_TAG, "Errore durante l'invio del messaggio: " + ex.toString());
-                        break;
+                    //Inizializza lo stream di output
+                    oos = new ObjectOutputStream(connSocket.getOutputStream());
+                    Log.i(LOG_TAG, "Inizializzo l'ObjcetOutputStream.");
 
-                    } catch (InterruptedException ex) {
-                        //Si è verificata un'interruzione durante l'ottenimento
-                        //del messaggio da inviare
-                        Log.e(LOG_TAG, "Interruzione durante il prelevamento del messaggio da inviare: " + ex.toString());
-                        break;
+                    //Invia il messaggio DUMMY per far ottenere subito l'indirizzo MAC
+                    //di questo dispositivo al dispositivo remoto.
+                    //oos.writeObject(new Message(thisDeviceAddress, DUMMY_MESSAGE));
+                    //oos.flush();
+                    //Log.i(LOG_TAG, "Inviato messaggio DUMMY.");
+
+                    while (!Thread.currentThread().isInterrupted()) {
+                        try {
+                            //Rimane in ascolto per eventuali messaggi da inviare
+                            Message messageToSend = messagesQueue.take();
+
+                            //Manda il messaggio appena ottenuto dalla coda dei messaggi
+                            oos.writeObject(messageToSend);
+                            oos.flush();
+                            Log.i(LOG_TAG, "Messaggio inviato.");
+
+                        } catch (IOException ex) {
+                            //Errore durante l'invio del messaggio prelevato
+                            Log.e(LOG_TAG, "Errore durante l'invio del messaggio: " + ex.toString());
+                            break;
+
+                        } catch (InterruptedException ex) {
+                            //Si è verificata un'interruzione durante l'ottenimento
+                            //del messaggio da inviare
+                            Log.e(LOG_TAG, "Interruzione durante il prelevamento del messaggio da inviare: " + ex.toString());
+                            break;
+                        }
                     }
+                }
+                catch(IOException ex) {
+                    //Si è verificato un errore durante l'inzializzazione dell'ObjectOutputStream
+                    Log.i(LOG_TAG, "Si è verificato un errore durante l'inzializzazione dell'ObjectOutputStream:");
+                    ex.printStackTrace();
                 }
 
                 //Chiudi lo stream di output
                 try {
-                    oos.close();
+                    if (oos != null)
+                        oos.close();
                 } catch (IOException ex) {
 
                     //Segnala l'eccezione, nulla di più
@@ -916,7 +986,7 @@ public class MyService extends Service {
             }
 
             //Informa le activity della disconnessione del dispositivo
-            if (mContactsListener) {
+            /*if (mContactsListener) {
                 Intent intent = new Intent(CostantKeys.ACTION_CONTACT_DISCONNECTED_FOR_CONTACTS);
                 intent.putExtra(CostantKeys.ACTION_CONTACT_DISCONNECTED_FOR_CONTACTS_EXTRA, macAddress);
                 mLocalBroadcastManager.sendBroadcast(intent);
@@ -925,49 +995,69 @@ public class MyService extends Service {
             else if (mMessagesListener && conversingWith.equals(macAddress)) {
                 Intent intent = new Intent(CostantKeys.ACTION_CONTACT_DISCONNECTED);
                 mLocalBroadcastManager.sendBroadcast(intent);
-            }
+            }*/
 
             //Rimuovi l'indirizzo MAC del dispositivo con cui si sta comunicando se è lo stesso di
             //questa connessione
-            if (conversingWith != null && conversingWith.equals(macAddress))
+            /*if (conversingWith != null && conversingWith.equals(macAddress))
                 conversingWith = null;
 
             //Rimuove questa connessione dalla lista delle connessioni attive
             synchronized (connections) {
                 connections.remove(this);
-            }
+            }*/
         }
     }
 
     private class ConnectThread extends Thread {
 
-        private InetAddress ip;
+        /*private InetAddress ip;
         private int port;
-        private String macAddress;
+        private String macAddress;*/
 
-        public ConnectThread(InetAddress ip, int port, String macAddress) {
+        /*public ConnectThread(InetAddress ip, int port, String macAddress) {
             this.ip = ip;
             this.port = port;
             this.macAddress = macAddress;
-        }
+        }*/
 
         @Override
         public void run() {
             try {
-                ChatConnection chatConnection = new ChatConnection(ip, port, macAddress);
-                connections.add(chatConnection);
+                currentConnection = new ChatConnection();
+                //connections.add(chatConnection);
                 Log.i(LOG_TAG, "Connessione con il dispositivo remoto riuscita.");
 
-                //Invia il messaggio DUMMY per far registrare l'indirizzo MAC di questo dispositivo
-                //al dispositivo destinatario.
-                chatConnection.sendMessage(new Message(thisDeviceMAC, DUMMY_MESSAGE));
-                Log.i(LOG_TAG, "Inviato messaggio dummy.");
+                //Ottieni l'indirizzo MAC del dispositivo remoto se non è ancora
+                //stato impostato (questo dispositivo ha ricevuto una richiesta di conversazione).
+                if (conversingWith == null)
+                    conversingWith = Utils.getMac(remoteDeviceIPAddress.getHostAddress());
 
-                //Invia l'intent di broadcast che notifica la riuscita connessione con il dispositivo
-                //remoto
-                Intent intent = new Intent(CostantKeys.ACTION_CONNECTED_TO_DEVICE);
-                intent.putExtra(CostantKeys.ACTION_CONNECTED_TO_DEVICE_EXTRA, macAddress);
-                mLocalBroadcastManager.sendBroadcast(intent);
+                Log.i(LOG_TAG, "Indirizzo MAC del dispositivo che ha richiesto la connessione: " + conversingWith);
+
+                //Avvisa l'activity dei contatti della riuscita connessione con il
+                //dispositivo remoto.
+                if (mContactsListener) {
+                    if (mIRequested) {
+                        //Manda l'intent che avvia l'activity/fragment di conversazione.
+                        Log.i(LOG_TAG, "Invio l'intent che avvia la conversazione.");
+
+                        mIRequested = false;
+
+                        Intent connectedIntent = new Intent(CostantKeys.ACTION_CONNECTED_TO_DEVICE);
+                        connectedIntent.putExtra(CostantKeys.ACTION_CONNECTED_TO_DEVICE_EXTRA, conversingWith);
+                        mLocalBroadcastManager.sendBroadcast(connectedIntent);
+                    }
+                    else {
+                        //Manda l'intent per la notifica che il contatto si è connesso a questo dispositivo.
+                        Log.i(LOG_TAG, "Invio l'intent che indica che il contatto si è connesso con questo dispositivo.");
+
+                        Intent connectedIntent = new Intent(CostantKeys.ACTION_CONNECTION_RECEIVED);
+                        connectedIntent.putExtra(CostantKeys.ACTION_CONNECTION_RECEIVED_EXTRA, conversingWith);
+                        mLocalBroadcastManager.sendBroadcast(connectedIntent);
+                    }
+                }
+
             }
             catch (IOException ex) {
                 Log.e(LOG_TAG, "Non è stato possibile connettersi con il dispositivo remoto: errore nella creazione di una ChatConnection.");
@@ -975,10 +1065,87 @@ public class MyService extends Service {
 
                 if (mContactsListener) {
                     Intent intent = new Intent(CostantKeys.ACTION_CONTACT_NOT_AVAILABLE);
-                    intent.putExtra(CostantKeys.ACTION_CONTACT_NOT_AVAILABLE_EXTRA, macAddress);
+                    intent.putExtra(CostantKeys.ACTION_CONTACT_NOT_AVAILABLE_EXTRA, conversingWith);
                     mLocalBroadcastManager.sendBroadcast(intent);
                 }
             }
+        }
+    }
+
+    /**
+     * Thread avviato per inizializzare il ServerSocket per le connessioni in entrata.
+     * È necessario inizializzare il ServerSocket in un thread altrimenti viene lanciata
+     * l'eccezione
+     */
+    private class StartServerThread extends Thread {
+
+        private ServerSocket server;
+
+        @Override
+        public void run() {
+            try {
+                Log.i(LOG_TAG, "Sono nel thread che crea il serverSocket.");
+                server = new ServerSocket(PORT);
+            }
+            catch(IOException ex) {
+                Log.i(LOG_TAG, "Non sono riuscito a istanziare il ServerSocket.");
+                ex.printStackTrace();
+                return;
+            }
+            try {
+                Log.i(LOG_TAG, "Sto aspettando la richiesta di connessione da parte del client.");
+                Socket client = server.accept();
+                Log.i(LOG_TAG, "Client connesso.");
+                currentConnection = new ChatConnection(client);
+
+                Log.i(LOG_TAG, "Connessione da parte del dispositivo remoto riuscita.");
+
+                //Recupera l'indirizzo MAC del dispositivo remoto se non
+                //è stato impostato ancora (quando si riceve una richiesta
+                //di connessione).
+                if (conversingWith == null) {
+
+                    conversingWith = Utils.getMac(remoteDeviceIPAddress.getHostAddress());
+                    Log.i(LOG_TAG, "Recuperato indirizzo MAC del dispositivo remoto: conversingWith = " + conversingWith);
+                }
+
+                //Informa l'activity dei contatti che è stata
+                //stabilita la connessione.
+                if (mContactsListener) {
+                    if (mIRequested) {
+                        //Invia l'intent per l'avvio dell'activity/fragment per la conversazione.
+                        Log.i(LOG_TAG, "Invio l'intent per l'avvio dell'activity/fragment della conversazione.");
+
+                        mIRequested = false;
+
+                        Intent connectedIntent = new Intent(CostantKeys.ACTION_CONNECTED_TO_DEVICE);
+                        connectedIntent.putExtra(CostantKeys.ACTION_CONNECTED_TO_DEVICE_EXTRA, conversingWith);
+                        mLocalBroadcastManager.sendBroadcast(connectedIntent);
+                    }
+                    else {
+                        //Invia l'intent per la notifica della connessione del contatto.
+                        Log.i(LOG_TAG, "Invio l'intent per la notifica di connessione con il dispositivo remoto.");
+
+                        Intent connectedIntent = new Intent(CostantKeys.ACTION_CONNECTION_RECEIVED);
+                        connectedIntent.putExtra(CostantKeys.ACTION_CONNECTION_RECEIVED_EXTRA, conversingWith);
+                        mLocalBroadcastManager.sendBroadcast(connectedIntent);
+                    }
+                }
+            }
+            catch(IOException ex) {
+                //Errore durante la connessione con il client
+                conversingWith = null;
+                Log.e(LOG_TAG, "Errore durante la connessione con il client: " + ex.toString());
+                ex.printStackTrace();
+            }
+
+            try {
+                server.close();
+            }
+            catch(IOException ex) {
+                //Niente di importante da fare.
+            }
+
         }
     }
 
@@ -1051,5 +1218,17 @@ public class MyService extends Service {
         Intent checkContactIntent = new Intent(context, MyService.class);
         checkContactIntent.setAction(ACTION_CHECK_CONTACT_AVAILABLE);
         context.startService(checkContactIntent);
+    }
+
+    /**
+     * Metodo statico invocato dall'activity dei contatti per confermare la disconnessione
+     * Wi-Fi Direct con il dispositivo remoto.
+     *
+     * @param context Un'istanza di Context utilizzata per invocare il metodo startService().
+     */
+    public static void disconnect(Context context) {
+        Intent disconnectIntent = new Intent(context, MyService.class);
+        disconnectIntent.setAction(ACTION_DISCONNECT);
+        context.startService(disconnectIntent);
     }
 }

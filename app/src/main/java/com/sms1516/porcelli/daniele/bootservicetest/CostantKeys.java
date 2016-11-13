@@ -18,7 +18,10 @@ public interface CostantKeys {
     String ACTION_SEND_MESSAGE_FOR_CONTACTS = "com.sms1516.porcelli.daniele.wichat.action.SEND_MESSAGE_FOR_CONTACTS";
 
     //Chiave costante utlizzata per recuperare dall'intent il messaggio appena ricevuto
-    String ACTION_SEND_MESSAGE_FOR_CONTACTS_EXTRA = "com.sms1516.porcelli.daniele.wichat.action.SEND_MESSAGE_FOR_CONTACTS_EXTRA";
+    String ACTION_SEND_DISCONNECT_REQUEST = "com.sms1516.porcelli.daniele.wichat.action.SEND_DISCONNECT_REQUEST";
+
+    //Chiave costante utlizzata dall'intent ACTION_SEND_DISCONNECT_REQUEST per inserire e recuperare l'indirizzo MAC del dispositivo con il quale bisogna disconnettersi
+    String ACTION_SEND_DISCONNECT_REQUEST_EXTRA = "com.sms1516.porcelli.daniele.wichat.action.SEND_DISCONNECT_REQUEST_EXTRA";
 
     //Chiave costante utlizzata per l'intent che ha il compito di notificare la disconnessione di un contatto all'activity dei contatti
     String ACTION_CONTACT_DISCONNECTED_FOR_CONTACTS = "com.sms1516.porcelli.daniele.wichat.action.CONTACT_DISCONNECTED_FOR_CONTACTS";
@@ -46,6 +49,12 @@ public interface CostantKeys {
 
     //Chiave costante utilizzata per inserire e recuperare l'indirizzo MAC dall'intent ACTION_CONTACT_NOT_AVAILABLE
     String ACTION_CONTACT_NOT_AVAILABLE_EXTRA = "com.sms1516.porcelli.daniele.wichat.action.CONTACT_NOT_AVAILABLE_EXTRA";
+
+    //Chiave costatnte utilizzata per l'intent che indica la riuscita connessione delle socket
+    String ACTION_CONNECTION_RECEIVED = "com.sms1516.porcelli.daniele.wichat.action.CONNECTION_RECEIVED";
+
+    //Chiave costante utilizzata dall'intent per recuperare e inserire l'indirizzo MAC del dispositivo con cui si è riuscito a stabilire la connessione con le socket
+    String ACTION_CONNECTION_RECEIVED_EXTRA = "com.sms1516.porcelli.daniele.wichat.action.CONNECTION_RECEIVED_EXTRA";
 
     //Chiave costante utilizzata nell'intent che avvia l'activity di conversazione per inserire e recuperare il nome del contatto con cui si vuole comunicare
     String ACTION_START_CONVERSATION_ACTIVITY_EXTRA_NAME = "com.sms1516.porcelli.daniele.wichat.action.START_CONVERSATION_ACTIVITY_EXTRA_NAME";

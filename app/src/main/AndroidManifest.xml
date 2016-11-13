@@ -18,6 +18,10 @@
     <uses-permission
         android:name="android.permission.CHANGE_NETWORK_STATE"
         android:required="true" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+
+    <uses-feature android:name="android.hardware.wifi.direct" android:required="true"/>
 
     <!-- Questi permessi servono per leggere il nome del proprietario del dispositivo -->
     <uses-permission

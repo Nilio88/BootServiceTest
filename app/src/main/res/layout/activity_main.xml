@@ -16,4 +16,24 @@
         android:id="@+id/contactDetected_tv"
         android:clickable="true"
         android:onClick="startConversation" />
+
+    <TextView
+        android:id="@+id/connesso_tv"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_toRightOf="@id/contactDetected_tv"/>
+
+    <TextView
+        android:id="@+id/num_nuovi_messaggi_tv"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text=""
+        android:layout_toRightOf="@id/connesso_tv" />
+
+    <Button
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignParentBottom="true"
+        android:text="Leggi file arp"
+        android:onClick="readArp"/>
 </RelativeLayout>

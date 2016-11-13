@@ -56,7 +56,7 @@ public class ConversationActivity extends AppCompatActivity {
 
             WifiManager wifiManager = (WifiManager) getSystemService(Context.WIFI_SERVICE);
             WifiInfo info = wifiManager.getConnectionInfo();
-            mThisDeviceMacAddress = info.getMacAddress();
+            mThisDeviceMacAddress = info.getMacAddress().toLowerCase();
 
             Log.i(LOG_TAG, "Indirizzo MAC recuperato: " + mThisDeviceMacAddress);
         }
@@ -69,6 +69,7 @@ public class ConversationActivity extends AppCompatActivity {
         mLocalBroadcastManager = LocalBroadcastManager.getInstance(this);
         mMessagesReceiver = new MessagesReceiver();
 
+        mIntentFilter = new IntentFilter();
         mIntentFilter.addAction(CostantKeys.ACTION_SEND_MESSAGE);
         mIntentFilter.addAction(CostantKeys.ACTION_CONTACT_DISCONNECTED);
         mIntentFilter.addAction(CostantKeys.ACTION_CONTACT_AVAILABILITY);
@@ -80,8 +81,10 @@ public class ConversationActivity extends AppCompatActivity {
 
         mLocalBroadcastManager.registerReceiver(mMessagesReceiver, mIntentFilter);
 
+        MyService.registerMessagesListener(this);
+
         //Controlla se il contatto con cui sta comunicando è ancora disponibile
-        MyService.checkContactAvailable(this);
+        //MyService.checkContactAvailable(this);
 
     }
 
@@ -94,14 +97,21 @@ public class ConversationActivity extends AppCompatActivity {
 
     }
 
-    public void sendMessage(View view) {
 
-        //Crea un'istanza di Message e la invia al Service
+    public void sendMessage(View view) {
         String testo = mMessageEditText.getText().toString();
-        Message messaggio = new Message(mThisDeviceMacAddress, testo);
-        mMessageEditText.setText("");
-        Log.i(LOG_TAG, "Messaggio inviato al Service.");
-        MyService.sendMessage(this, messaggio);
+
+        if (!testo.isEmpty()) {
+            //Visualizza il messaggio appena composto nella lista dei messaggi
+            mMessagesAdapter.add(testo);
+            mMessagesAdapter.notifyDataSetChanged();
+
+            //Crea un'istanza di Message e la invia al Service
+            Message messaggio = new Message(mThisDeviceMacAddress, testo);
+            mMessageEditText.setText("");
+            Log.i(LOG_TAG, "Messaggio inviato al Service.");
+            MyService.sendMessage(this, messaggio);
+        }
     }
 
     private class MessagesReceiver extends BroadcastReceiver {
