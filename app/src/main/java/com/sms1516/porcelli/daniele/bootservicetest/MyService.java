@@ -168,7 +168,21 @@ public class MyService extends Service {
 
                     @Override
                     public void onFailure(int reason) {
-                        Log.e(LOG_TAG, "Impossibile collegarsi con il client tramite Wi-Fi P2P.");
+
+                        //Si è verificato un errore. Esso verrà registrato nel Log.
+                        String errore = null;
+                        switch (reason) {
+                            case WifiP2pManager.P2P_UNSUPPORTED:
+                                errore = "Wi-Fi P2P non supportato da questo dispositivo.";
+                                break;
+                            case WifiP2pManager.BUSY:
+                                errore = "sistema troppo occupato per elaborare la richiesta.";
+                                break;
+                            default:
+                                errore = "si è verificato un errore durante la connessione con il dispositivo remoto tramite Wi-Fi Direct.";
+                                break;
+                        }
+                        Log.e(LOG_TAG, "Impossibile collegarsi con il client tramite Wi-Fi Direct: " + errore);
 
                         //Informa le activity/fragment che il dispositivo non è reperibile
                         if (mContactsListener) {
@@ -222,11 +236,32 @@ public class MyService extends Service {
                     @Override
                     public void onSuccess() {
                         Log.i(LOG_TAG, "Connessione Wi-Fi Direct chiusa.");
+
+                        //A quanto pare, per poter permettere di connettersi ad altri dispositivi
+                        //dopo essersi disconnessi da quello precedente, c'è bisogno riavviare
+                        //la ricerca dei servizi.
+                        Log.i(LOG_TAG, "Riavvio la ricerca dei servizi.");
+
+                        discoverServices();
                     }
 
                     @Override
                     public void onFailure(int reasonCode) {
-                        Log.i(LOG_TAG, "Disconnessione fallita: " + reasonCode);
+
+                        //Si è verificato un errore. Esso verrà registrato nel Log.
+                        String errore = null;
+                        switch (reasonCode) {
+                            case WifiP2pManager.P2P_UNSUPPORTED:
+                                errore = "Wi-Fi P2P non supportato da questo dispositivo.";
+                                break;
+                            case WifiP2pManager.BUSY:
+                                errore = "sistema troppo occupato per elaborare la richiesta.";
+                                break;
+                            default:
+                                errore = "si è verificato un errore durante la registrazione del servizio WiChat.";
+                                break;
+                        }
+                        Log.i(LOG_TAG, "Disconnessione fallita: " + errore);
                     }
                 });
             }
@@ -291,7 +326,7 @@ public class MyService extends Service {
         //Registra la richiesta
         WifiP2pDnsSdServiceRequest serviceRequest = WifiP2pDnsSdServiceRequest.newInstance();
 
-        //Per sicurezza, rimuovi ogni richiesta dal WifiP2pManager
+        //Per sicurezza, rimuovi ogni precedente richiesta dal WifiP2pManager
         mManager.clearServiceRequests(mChannel, new WifiP2pManager.ActionListener() {
             @Override
             public void onSuccess() {
@@ -651,6 +686,13 @@ public class MyService extends Service {
                         }
 
                         conversingWith = null;
+
+                        //A quanto pare, per poter permettere di connettersi ad altri dispositivi
+                        //dopo essersi disconnessi da quello precedente, c'è bisogno di riavviare
+                        //la ricerca dei servizi.
+                        Log.i(LOG_TAG, "Riavvio la ricerca dei servizi.");
+
+                        discoverServices();
                     }
 
                 }

@@ -84,13 +84,6 @@ public class MainActivity extends AppCompatActivity {
     protected void onStart() {
         super.onStart();
         Log.i(LOG_TAG, "Sono in onStart() di MainActivity.");
-    }
-
-    @Override
-    protected void onResume() {
-        super.onResume();
-
-        Log.i(LOG_TAG, "Sono in onResume() di MainActivity.");
 
         mLocalBroadcastManager.registerReceiver(mContactsMessagesReceiver, mIntentFilter);
 
@@ -104,16 +97,19 @@ public class MainActivity extends AppCompatActivity {
         }
 
         Log.i(LOG_TAG, "Avviata la scansione dei dispositivi.");
+    }
 
+    @Override
+    protected void onResume() {
+        super.onResume();
+
+        Log.i(LOG_TAG, "Sono in onResume() di MainActivity.");
     }
 
     @Override
     protected void onPause() {
         super.onPause();
         Log.i(LOG_TAG, "Sono in onPause() di MainActivity.");
-        MyService.unRegisterContactsListener(this);
-
-        mLocalBroadcastManager.unregisterReceiver(mContactsMessagesReceiver);
 
     }
 
@@ -121,7 +117,9 @@ public class MainActivity extends AppCompatActivity {
     protected void onStop() {
         super.onStop();
         Log.i(LOG_TAG, "Sono in onStop() di MainActivity.");
+        MyService.unRegisterContactsListener(this);
 
+        mLocalBroadcastManager.unregisterReceiver(mContactsMessagesReceiver);
     }
 
     @Override
