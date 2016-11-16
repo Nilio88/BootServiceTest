@@ -77,7 +77,7 @@ public class Utils {
      * @return true se i due indirizzi sono simili (hanno un numero limitato di caratteri differenti tra loro); false, altrimenti.
      */
     public static boolean isMacSimilar(String firstMac, String secondMac) {
-        final int NUMERO_MASSIMO_CARATTERI_DIFFERENTI = 3;  //Possiamo anche cambiarlo se l'app finale fa troppi errori.
+        final int NUMERO_MASSIMO_CARATTERI_DIFFERENTI = 2;  //Possiamo anche cambiarlo se l'app finale fa troppi errori.
 
         Log.i(LOG_TAG, "Primo indirizzo MAC: " + firstMac);
         Log.i(LOG_TAG, "Secondo indirizzo MAC: " + secondMac);

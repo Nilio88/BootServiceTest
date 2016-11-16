@@ -4,6 +4,7 @@ import android.app.ActivityOptions;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.os.Build;
 import android.support.v4.content.LocalBroadcastManager;
 import android.support.v7.app.AppCompatActivity;
@@ -16,6 +17,7 @@ import android.view.View;
 import android.view.Menu;
 import android.view.MenuInflater;
 import android.view.MenuItem;
+import android.widget.Toast;
 
 import org.w3c.dom.Text;
 
@@ -37,10 +39,12 @@ public class MainActivity extends AppCompatActivity {
     private TextView mNuoviMessaggi;
     private TextView mConnesso;
     private LocalBroadcastManager mLocalBroadcastManager;
+    private MessagesStore mMessagesStore;
     private IntentFilter mIntentFilter;
     private ContactsMessagesReceiver mContactsMessagesReceiver;
-    private String macAddress;
-    private int mNumMessaggi;
+    private String macAddress;  //Memorizza l'indirizzo MAC del dispositivo rilevato.
+    private SharedPreferences mMessagesReceivedPrefs;    //Memorizzerà, per ciascun dispositivo rilevato, il numero di messaggi scambiati con esso.
+    private int mNumMessaggi;   //Memorizzerà il numero dei messaggi ricevuti dal contatto ma non ancora letti.
     private boolean mFirstRun = true;
     private boolean mTwoPane;
 
@@ -58,6 +62,8 @@ public class MainActivity extends AppCompatActivity {
 
         mLocalBroadcastManager = LocalBroadcastManager.getInstance(this);
         mContactsMessagesReceiver = new ContactsMessagesReceiver();
+        mMessagesReceivedPrefs = getSharedPreferences(CostantKeys.RECEIVED_MESSAGES_PREFS, MODE_PRIVATE);
+        mMessagesStore = MessagesStore.getInstance();
 
         mIntentFilter = new IntentFilter();
         mIntentFilter.addAction(CostantKeys.ACTION_SEND_CONTACT);
@@ -67,6 +73,7 @@ public class MainActivity extends AppCompatActivity {
         mIntentFilter.addAction(CostantKeys.ACTION_CONNECTED_TO_DEVICE);
         mIntentFilter.addAction(CostantKeys.ACTION_SEND_DISCONNECT_REQUEST);    //Copia e incolla questo
         mIntentFilter.addAction(CostantKeys.ACTION_CONNECTION_RECEIVED);   //Copia e incolla questo
+        mIntentFilter.addAction(CostantKeys.ACTION_CONTACT_CONNECTED);  //Copia e incolla questo
 
         if (savedInstanceState != null) {
             //Recupero il nome, il numero dei messaggi non letti e l'indirizzo MAC del dispositivo rilevato.
@@ -92,7 +99,7 @@ public class MainActivity extends AppCompatActivity {
         //Se questa Activity è stata avviata per la prima volta,
         //avvia la scansione dei dispositivi nelle vicinanze.
         if (mFirstRun) {
-            MyService.discoverServices(this);
+            MyService.whoIsConnected(this);
             mFirstRun = false;
         }
 
@@ -235,7 +242,22 @@ public class MainActivity extends AppCompatActivity {
         Utils.getMac(" ");
     }
 
+    /**
+     * Metodo invocato dal bottone per cancellare la cronologia dei messaggi
+     * del contatto.
+     *
+     * @param view Il bottone premuto.
+     */
+    public void cancellaMessaggi(View view) {
+        if (macAddress != null) {
+            Log.i(LOG_TAG, "Premuto tasto per la cancellazione della cronologia dei messaggi.");
+            MyService.deleteMessages(this, macAddress);
+        }
+    }
+
     private class ContactsMessagesReceiver extends BroadcastReceiver {
+
+        private String connectedTo; //Memorizza l'indirizzo MAC del dispositivo remoto con il quale si è già connessi
 
         @Override
         public void onReceive(Context context, Intent intent) {
@@ -248,6 +270,25 @@ public class MainActivity extends AppCompatActivity {
                 contactDetected.setText(device.deviceName);
                 macAddress = device.deviceAddress;
                 Log.i(LOG_TAG, "Indirizzo MAC del dispositivo rilevato: " + macAddress);
+
+                //Controlla se il contatto appena rilevato è già connesso con
+                //il nostro dispositivo.
+                if (connectedTo != null && Utils.isMacSimilar(connectedTo, device.deviceAddress)) {
+
+                    //Segnala che il dispositivo remoto appena rilevato è già connesso
+                    //con quello nostro.
+                    mConnesso.setText(" (Connesso)");
+                }
+
+                //Controlla se ci sono messaggi ricevuti da questo contatto ma non ancora letti.
+                int numMessaggi = mMessagesReceivedPrefs.getInt(device.deviceAddress, 0);
+                int messaggiCronologia = mMessagesStore.getMessagesCount(device.deviceAddress);
+                int nuoviMessaggi = messaggiCronologia - numMessaggi;
+
+                if (nuoviMessaggi > 0)
+                    mNuoviMessaggi.setText(" (" + nuoviMessaggi + ")");
+                mNumMessaggi = nuoviMessaggi;
+
             }
             else if (action.equals(CostantKeys.ACTION_CONTACT_NOT_AVAILABLE)) {
 
@@ -286,6 +327,7 @@ public class MainActivity extends AppCompatActivity {
                 //nella recyclerView e indica come contatto connesso quello che ha ottenuto il
                 //risultato più basso.
                 mConnesso.setText(" (Connesso)");
+                connectedTo = mac;
 
                 //Inserisci qui il codice per ottenere il nome del contatto e la sua View
                 //dalla recyclerView sfruttando l'indirizzo MAC appena estratto dall'intent
@@ -307,6 +349,7 @@ public class MainActivity extends AppCompatActivity {
                 //disconnesso (usando l'indirizzo MAC memorizzato in disconnectedDevice).
                 if (Utils.isMacSimilar(macAddress, disconnectedDevice)) {
                     mConnesso.setText("");
+                    connectedTo = null;
                 }
             }
 
@@ -362,8 +405,27 @@ public class MainActivity extends AppCompatActivity {
 
                 //Io ora uso Utils.isMacSimilar() poiché rilevo solo un dispositivo alla volta (quello
                 //rilevato più di recente).
-                if (Utils.isMacSimilar(remoteDevice, macAddress))
+                if (Utils.isMacSimilar(remoteDevice, macAddress)) {
                     mConnesso.setText(" (Connesso)");
+                    connectedTo = remoteDevice;
+                }
+            }
+
+            else if (action.equals(CostantKeys.ACTION_CONTACT_CONNECTED)) { //Copia e incolla questo else if
+
+                //Questo intent viene inviato dalla classe Service per informare l'activity
+                //quale contatto risulta essere connesso a questo dispositivo tramite il Wi-Fi Direct.
+                connectedTo = intent.getStringExtra(CostantKeys.ACTION_CONTACT_CONNECTED_EXTRA);
+                MyService.discoverServices(context);
+            }
+            
+            else if (action.equals(CostantKeys.ACTION_CONNECTION_REFUSED)) {    //Copia e incolla questo else if
+                
+                //Il contatto con cui si vuole conversare non ha accettato la richiesta
+                //di connessione Wi-Fi Direct. Avvisa l'utente.
+                //Inserisci qui il codice che interrompe la progress bar e visualizza il messaggio
+                //che comunica il rifiuto della connessione (preferibilmente in una dialogue).
+                Toast.makeText(context, "Connessione rifiutata.", Toast.LENGTH_SHORT).show();
             }
         }
     }

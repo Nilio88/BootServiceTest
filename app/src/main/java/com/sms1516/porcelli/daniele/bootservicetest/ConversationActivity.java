@@ -2,6 +2,7 @@ package com.sms1516.porcelli.daniele.bootservicetest;
 
 import android.content.Context;
 import android.content.IntentFilter;
+import android.content.SharedPreferences;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.content.BroadcastReceiver;
@@ -16,10 +17,14 @@ import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
 import android.util.Log;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import org.w3c.dom.Text;
 
 public class ConversationActivity extends AppCompatActivity {
 
+    private MessagesStore mMessagesStore;
     private ArrayAdapter<String> mMessagesAdapter;
     private ListView mListView;
     private EditText mMessageEditText;
@@ -28,6 +33,12 @@ public class ConversationActivity extends AppCompatActivity {
     private IntentFilter mIntentFilter;
     private String mContactMacAddress;
     private String mThisDeviceMacAddress;
+    private SharedPreferences mMessagesReceivedPrefs;
+    private int mNumMessaggi;   //Memorizza il numero di messaggi caricati dal file di cronologia di conversazione.
+
+    private static final String KEY_NUM_MESSAGGI_CRONOLOGIA = "num_messaggio_cronologia";
+    private static final String KEY_CONTACT_MAC = "contact_mac";
+    private static final String KEY_THIS_DEVICE_MAC = "this_device_mac";
 
     private static final String LOG_TAG = ConversationActivity.class.getName();
 
@@ -35,12 +46,15 @@ public class ConversationActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        mMessagesStore = MessagesStore.getInstance();
+
         setContentView(R.layout.activity_conversation);
         mListView = (ListView) findViewById(R.id.messages_listView);
         mMessagesAdapter = new ArrayAdapter<String>(this, R.layout.message_item);
         mListView.setAdapter(mMessagesAdapter);
         mMessageEditText = (EditText) findViewById(R.id.message_et);
         TextView contactNameTv = (TextView) findViewById(R.id.contact_name_tv);
+        mMessagesReceivedPrefs = getSharedPreferences(CostantKeys.RECEIVED_MESSAGES_PREFS, MODE_PRIVATE);
 
         //Controlla se è stata avviata l'activity per la prima volta oppure se è stata ricreata
         //dopo aver ruotato il dispositivo
@@ -64,7 +78,13 @@ public class ConversationActivity extends AppCompatActivity {
 
             //Inserisci qui il codice per recuperare i dati salvati dall'activity
             //tramite il metodo onSaveInstanceState()
+
+            mNumMessaggi = savedInstanceState.getInt(KEY_NUM_MESSAGGI_CRONOLOGIA);
+            mThisDeviceMacAddress = savedInstanceState.getString(KEY_THIS_DEVICE_MAC);
+            mContactMacAddress = savedInstanceState.getString(KEY_CONTACT_MAC);
         }
+
+        Log.i(LOG_TAG, "In onCreate() mNumMessaggi = " + mNumMessaggi);
 
         mLocalBroadcastManager = LocalBroadcastManager.getInstance(this);
         mMessagesReceiver = new MessagesReceiver();
@@ -78,23 +98,77 @@ public class ConversationActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        Log.i(LOG_TAG, "Sono in onResume() di ConversationActivity.");
 
         mLocalBroadcastManager.registerReceiver(mMessagesReceiver, mIntentFilter);
 
+        //Recupera la cronologia dei messaggi inviati e ricevuti da questo contatto.
+        List<Message> messaggi = mMessagesStore.loadMessagesList(mContactMacAddress);
+
         MyService.registerMessagesListener(this);
 
+        //Inserisce i messaggi nell'adapter.
+        for (int i = mNumMessaggi; i < messaggi.size(); i++) {
+            Message messaggio = messaggi.get(i);
+            mMessagesAdapter.add(messaggio.getText());
+            mNumMessaggi++;
+        }
+        mMessagesAdapter.notifyDataSetChanged();
+
+        Log.i(LOG_TAG, "In onResume() mNumMessaggi = " + mNumMessaggi);
+
+        //Memorizza nelle Shared Preferences il numero dei messaggi letti dal file della cronologia.
+        SharedPreferences.Editor editor = mMessagesReceivedPrefs.edit();
+        editor.putInt(mContactMacAddress, mNumMessaggi);
+        editor.apply();
+
         //Controlla se il contatto con cui sta comunicando è ancora disponibile
-        //MyService.checkContactAvailable(this);
+        MyService.checkContactAvailable(this);
 
     }
 
     @Override
     protected void onPause() {
         super.onPause();
+        Log.i(LOG_TAG, "Sono in onPause() di ConversationActivity.");
+
+        Log.i(LOG_TAG, "In onPause() mNumMessaggi = " + mNumMessaggi);
+
+        List<Message> messaggiNuovi = new ArrayList<>();
 
         MyService.unRegisterMessagesListener(this);
+
+        //Salva i nuovi messaggi ricevuti nel file della cronologia
+        for (int i = mNumMessaggi; i < mMessagesAdapter.getCount(); i++) {
+
+            //Aggiunge il messaggio alla lista di messaggi da salvare.
+            //ATTENZIONE: Io ho messo come mittente mContactMacAddress ad ogni messaggio,
+            //ma dobbiamo mettere il giusto mittente di ogni messaggio presente nell'adapter.
+            messaggiNuovi.add(new Message(mContactMacAddress, mMessagesAdapter.getItem(i)));
+            mNumMessaggi++;
+        }
+
+        Log.i(LOG_TAG, "In onPause() dopo il salvataggio dei messaggi, mNumMessaggi = " + mNumMessaggi);
+
+        if (messaggiNuovi.size() > 0)
+            mMessagesStore.saveMessagesList(messaggiNuovi);
+
         mLocalBroadcastManager.unregisterReceiver(mMessagesReceiver);
 
+        //Memorizza nelle Shared Preferences il numero dei messaggi letti dal file della cronologia.
+        SharedPreferences.Editor editor = mMessagesReceivedPrefs.edit();
+        editor.putInt(mContactMacAddress, mNumMessaggi);
+        editor.apply();
+
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        super.onSaveInstanceState(outState);
+
+        outState.putInt(KEY_NUM_MESSAGGI_CRONOLOGIA, mNumMessaggi);
+        outState.putString(KEY_CONTACT_MAC, mContactMacAddress);
+        outState.putString(KEY_THIS_DEVICE_MAC, mThisDeviceMacAddress);
     }
 
 

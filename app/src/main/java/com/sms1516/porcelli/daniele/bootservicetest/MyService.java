@@ -3,6 +3,7 @@ package com.sms1516.porcelli.daniele.bootservicetest;
 import android.app.Service;
 import android.content.Intent;
 import android.os.IBinder;
+import android.os.Handler;
 import android.content.Context;
 import android.util.Log;
 import android.content.IntentFilter;
@@ -22,7 +23,6 @@ import android.support.v4.content.LocalBroadcastManager;
 import android.database.Cursor;
 
 import java.io.EOFException;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -30,10 +30,7 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
-import java.io.BufferedReader;
-import java.io.FileReader;
 import java.io.IOException;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -42,6 +39,12 @@ public class MyService extends Service {
 
     private static final String LOG_TAG = MyService.class.getName();
     private static final int PORT = 6770;
+
+    //Costante che memorizza il tempo dato al dispositivo remoto entro il quale accettare la connessione Wi-Fi Direct.
+    private static final long WIFI_DIRECT_CONNECTION_WAIT_TIME = 30000L;    //Al dispositivo remoto vengono dati 30 secondi entro i quali può accettare la connessione Wi-Fi Direct.
+
+    //Costante usata per identificare il messaggio ricevuto dall'handler.
+    private static final int REFUSED_WHAT = 1;
 
     //Costanti per le azioni e i parametri degli intent
     private static final String ACTION_REGISTER_CONTACTS_LISTENER = "com.sms1516.porcelli.daniele.wichat.action.REGISTER_CONTACTS_LISTENER";
@@ -55,13 +58,17 @@ public class MyService extends Service {
     private static final String ACTION_DISCONNECT = "com.sms1516.porcelli.daniele.wichat.action.DISCONNECT";
 
     private static final String ACTION_REGISTER_MESSAGES_LISTENER = "com.sms1516.porcelli.daniele.wichat.action.REGISTER_MESSAGES_LISTENER";
-    private static final String ACTION_REGISTER_MESSAGES_LISTENER_EXTRA = "com.sms1516.porcelli.daniele.wichat.action.REGISTER_MESSAGES_LISTENER";
 
     private static final String ACTION_UNREGISTER_MESSAGES_LISTENER = "com.sms1516.porcelli.daniele.wichat.action.UNREGISTER_MESSAGES_LISTENER";
 
-    private static final String ACTION_SEND_MESSAGE = "com.sms1516.porcelli.daniele.wichat.action.ACTION_SEND_MESSAGE";
-    private static final String ACTION_SEND_MESSAGE_EXTRA = "com.sms1516.porcelli.daniele.wichat.action.ACTION_SEND_MESSAGE_EXTRA";
+    private static final String ACTION_SEND_MESSAGE = "com.sms1516.porcelli.daniele.wichat.action.SEND_MESSAGE";
+    private static final String ACTION_SEND_MESSAGE_EXTRA = "com.sms1516.porcelli.daniele.wichat.action.SEND_MESSAGE_EXTRA";
     private static final String ACTION_CHECK_CONTACT_AVAILABLE = "com.sms1516.porcelli.daniele.wichat.action.CHECK_CONTACT_AVAILABLE";
+
+    private static final String ACTION_DELETE_MESSAGES = "com.sms1516.porcelli.daniele.wichat.action.DELETE_MESSAGES";
+    private static final String ACTION_DELETE_MESSAGES_EXTRA = "com.sms1516.porcelli.daniele.wichat.action.DELETE_MESSAGES_EXTRA";
+
+    private static final String ACTION_WHO_IS_CONNECTED = "com.sms1516.porcelli.daniele.wichat.action.WHO_IS_CONNECTED";
 
     //Variabili d'istanza
     private WifiP2pManager mManager;
@@ -78,16 +85,35 @@ public class MyService extends Service {
     private boolean mMessagesListener;
     private boolean mIRequested;    //Memorizzerà lo stato che indica se è stato l'utente a richiedere la connessione oppure no.
     private String thisDeviceAddress;
-    //private Map<String, Integer> servicesConnectionInfo = new HashMap<>();
-    //private List<ChatConnection> connections = new ArrayList<>();
     private ChatConnection currentConnection;
-
-    //Testo per identificare il messaggio dummy
-    //private static final String DUMMY_MESSAGE ="!DUMMYMESSAGE";
+    private MessagesStore mMessagesStore;
 
     //Dizionario che conserva le coppie (indirizzo, nome) per l'associazione di un
     //nome più amichevole al dispositivo individuato
     private final HashMap<String, String> buddies = new HashMap<>();
+
+    //Handler che elabora il messaggio REFUSED_WHAT ricevuto quando
+    //il dispositivo remoto ci mette più di 30 secondi per accettare
+    //la connessione con il nostro dispositivo tramite Wi-Fi Direct.
+    private Handler mHandler = new Handler() {
+
+        @Override
+        public void handleMessage(android.os.Message msg) {
+            switch(msg.what) {
+                case REFUSED_WHAT:
+
+                    //Manda un intent all'activity dei contatti che notifica
+                    //che il contatto non ha accettato la connessione Wi-Fi Direct
+                    //entro il tempo limite di 30 secondi.
+                    if (conversingWith == null && mContactsListener) {
+                        Log.i(LOG_TAG, "Il contatto non ha accettato la connessione.");
+                        mIRequested = false;
+                        Intent connectionRefusedIntent = new Intent(CostantKeys.ACTION_CONNECTION_REFUSED);
+                        mLocalBroadcastManager.sendBroadcast(connectionRefusedIntent);
+                    }
+            }
+        }
+    };
 
 
     @Override
@@ -97,6 +123,7 @@ public class MyService extends Service {
         mManager = (WifiP2pManager) getSystemService(Context.WIFI_P2P_SERVICE);
         mChannel = mManager.initialize(this, getMainLooper(), null);
         mLocalBroadcastManager = LocalBroadcastManager.getInstance(this);
+        mMessagesStore = MessagesStore.getInstance();
 
         //Crea l'intent filter per WifiP2pBroadCastReceiver
         mIntentFilter = new IntentFilter();
@@ -151,6 +178,14 @@ public class MyService extends Service {
                 WifiP2pConfig config = new WifiP2pConfig();
                 config.deviceAddress = device;
                 config.wps.setup = WpsInfo.PBC;
+
+                //Crea il messaggio per l'handler e invialo dopo 30 secondi a
+                //partire da ora.
+                Log.i(LOG_TAG, "Preparo il messaggio per l'handler.");
+
+                final android.os.Message refusedMessage = mHandler.obtainMessage(REFUSED_WHAT);
+                mHandler.sendMessageAtTime(refusedMessage, System.currentTimeMillis() + WIFI_DIRECT_CONNECTION_WAIT_TIME);
+                Log.i(LOG_TAG, "Tra 30 secondi arriverà il messaggio all'handler.");
 
                 //Chiama il metodo di WifiP2pManager per stabilire una connessione Wi-Fi Direct con il dispositivo remoto.
                 mManager.connect(mChannel, config, new WifiP2pManager.ActionListener() {
@@ -306,6 +341,31 @@ public class MyService extends Service {
             Intent contactAvailabilityIntent = new Intent(CostantKeys.ACTION_CONTACT_AVAILABILITY);
             contactAvailabilityIntent.putExtra(CostantKeys.ACTION_CONTACT_AVAILABILITY_EXTRA, conversingWith == null);
             mLocalBroadcastManager.sendBroadcast(contactAvailabilityIntent);
+        }
+
+        else if (intent.getAction().equals(ACTION_DELETE_MESSAGES)) {
+
+            //Chiama il metodo di MessagesStore per cancellare il file
+            //contenente la cronologia dei messaggi ricevuti (e inviati) dal
+            //contatto il cui indirizzo MAC è fornito in input.
+            String contatto = intent.getStringExtra(ACTION_DELETE_MESSAGES_EXTRA);
+
+            Log.i(LOG_TAG, "Cancello la cronologia dei messaggi di: " + buddies.get(contatto));
+            mMessagesStore.deleteMessages(contatto);
+        }
+
+        else if (intent.getAction().equals(ACTION_WHO_IS_CONNECTED)) {
+
+            //Crea un intent da passare all'activity dei contatti con dentro
+            //l'indirizzo MAC del contatto (dispositivo remoto) con il quale
+            //il nostro dispositivo è già connesso. Se non è connesso con alcun
+            //contatto, inserirà nell'intent il valore null (in pratica non fa altro
+            //che inserire nell'intent il valore memorizzato in conversingWith).
+            Log.i(LOG_TAG, "Restituisco all'activity l'indirizzo MAC del dispositivo già connesso (conversingWith).");
+
+            Intent contactConnectedIntent = new Intent(CostantKeys.ACTION_CONTACT_CONNECTED);
+            contactConnectedIntent.putExtra(CostantKeys.ACTION_CONTACT_CONNECTED_EXTRA, conversingWith);
+            mLocalBroadcastManager.sendBroadcast(contactConnectedIntent);
         }
 
         return Service.START_STICKY;
@@ -634,6 +694,10 @@ public class MyService extends Service {
                     if (mNsdService != null && !mNsdService.isInterrupted()) {
                         mNsdService.interrupt();
                     }
+
+                    //Interrompe il serverThread
+                    if (serverThread != null && !serverThread.isInterrupted())
+                        serverThread.interrupt();
                 }
             } else if (action.equals(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION)) {
 
@@ -647,6 +711,12 @@ public class MyService extends Service {
                 NetworkInfo networkInfo = (NetworkInfo) intent.getParcelableExtra(WifiP2pManager.EXTRA_NETWORK_INFO);
                 if (networkInfo.isConnected()) {
                     Log.i(LOG_TAG, "Il dispositivo si è connesso con un dispositivo remoto.");
+
+                    //Rimuovo il messaggio da inviare all'handler.
+                    if (mIRequested) {
+                        mHandler.removeCallbacksAndMessages(null);
+                        Log.i(LOG_TAG, "Messaggio da inviare all'handler rimosso.");
+                    }
 
                     //Si è appena connesso ad un dispositivo remoto: otteniamo le informazioni della connessione
                     mManager.requestConnectionInfo(mChannel, connectionInfoListener);
@@ -821,7 +891,7 @@ public class MyService extends Service {
          */
         private class ReceivingThread extends Thread {
 
-            //Variabile d'istanza
+            //Variabili d'istanza
             private ObjectInputStream objectInputStream;
 
             /**
@@ -883,12 +953,12 @@ public class MyService extends Service {
 
                                         //Salva il messaggio in memoria cosicché l'activity/fragment interessata
                                         //potrà recuperarlo e mostrarlo all'utente
-                                        //mMessagesStore.saveMessage(message);
+                                        mMessagesStore.saveMessage(message);
                                     }
                                     else {
 
-                                        //Salva il messaggio nella memoria interna e nient'altro
-                                        //mMessagesStore.saveMessage(message);
+                                        //Salva il messaggio nella memoria interna
+                                        mMessagesStore.saveMessage(message);
                                     }
                                 //}
                             }
@@ -1262,6 +1332,13 @@ public class MyService extends Service {
         context.startService(checkContactIntent);
     }
 
+    public static void deleteMessages(Context context, String device) {
+        Intent deleteMessagesIntent = new Intent(context, MyService.class);
+        deleteMessagesIntent.setAction(ACTION_DELETE_MESSAGES);
+        deleteMessagesIntent.putExtra(ACTION_DELETE_MESSAGES_EXTRA, device);
+        context.startService(deleteMessagesIntent);
+    }
+
     /**
      * Metodo statico invocato dall'activity dei contatti per confermare la disconnessione
      * Wi-Fi Direct con il dispositivo remoto.
@@ -1272,5 +1349,17 @@ public class MyService extends Service {
         Intent disconnectIntent = new Intent(context, MyService.class);
         disconnectIntent.setAction(ACTION_DISCONNECT);
         context.startService(disconnectIntent);
+    }
+
+    /**
+     * Metodo statico invocato dall'acitivty dei contatti per informare tale
+     * activity se e a quale contatto è già connesso il dispositivo in uso.
+     *
+     * @param context Un'istanza di Context utilizzata per invocare il metodo startService().
+     */
+    public static void whoIsConnected(Context context) {
+        Intent whoIsConnectedIntent = new Intent(context, MyService.class);
+        whoIsConnectedIntent.setAction(ACTION_WHO_IS_CONNECTED);
+        context.startService(whoIsConnectedIntent);
     }
 }

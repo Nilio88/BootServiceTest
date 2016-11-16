@@ -15,6 +15,11 @@ public class BootReceiver extends BroadcastReceiver {
 
         if (action.equals(Intent.ACTION_BOOT_COMPLETED) || action.equals(Intent.ACTION_REBOOT) || action.equals("android.intent.action.QUICKBOOT_POWERON")) {
 
+            //Inizializza il MessagesStore
+            Log.i(LOG_TAG, "Sto inizializzando il MessagesStore");
+            MessagesStore.initialize(context);
+            Log.i(LOG_TAG, "MessagesStore inizializzato.");
+
             //Avvia il servizio
             Intent serviceIntent = new Intent(context, MyService.class);
             Log.i(LOG_TAG, "Sto avviando MyService.");

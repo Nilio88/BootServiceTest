@@ -31,9 +31,19 @@
         android:layout_toRightOf="@id/connesso_tv" />
 
     <Button
+        android:id="@+id/read_arp_btn"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_alignParentBottom="true"
         android:text="Leggi file arp"
         android:onClick="readArp"/>
+
+    <Button
+        android:id="@+id/delete_messages_btn"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignParentBottom="true"
+        android:layout_toRightOf="@id/read_arp_btn"
+        android:text="Cancella cronologia messaggi"
+        android:onClick="cancellaMessaggi" />
 </RelativeLayout>

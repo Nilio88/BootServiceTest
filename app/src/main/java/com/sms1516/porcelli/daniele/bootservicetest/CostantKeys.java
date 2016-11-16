@@ -68,4 +68,16 @@ public interface CostantKeys {
     //Chiave costante utilizzata per inserire e recuperare lo stato della disponibilità del contatto con cui si sta comunicando
     String ACTION_CONTACT_AVAILABILITY_EXTRA = "com.sms1516.porcelli.daniele.wichat.action.START_CONVERSATION_ACTIVITY_EXTRA";
 
+    //Chiave costante utilizzata per l'intent che notifica se e quale contatto è già connesso con questo dispositivo
+    String ACTION_CONTACT_CONNECTED = "com.sms1516.porcelli.daniele.wichat.action.CONTACT_CONNECTED";
+
+    //Chiave costante utilizzata dall'intent di notifica ACTION_CONTACT_CONNECTED per inserire e recuperare l'indirizzo MAC del dispositivo già connesso
+    String ACTION_CONTACT_CONNECTED_EXTRA = "com.sms1516.porcelli.daniele.wichat.action.CONTACT_CONNECTED_EXTRA";
+
+    //Chiave costante utilizzata per indicare l'intent di rifiuto della connessione da parte del contatto.
+    String ACTION_CONNECTION_REFUSED = "com.sms1516.porcelli.daniele.wichat.action.CONNECTION_REFUSED";
+
+    //Chiave utilizzata per identificare le Shared Preferences dove vengono registrati i numeri di messaggi non letti per ogni contatto rilevato.
+    String RECEIVED_MESSAGES_PREFS = "received_messages_prefs";
+
 }
