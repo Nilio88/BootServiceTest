@@ -152,7 +152,7 @@ public class ConversationActivity extends AppCompatActivity {
         Log.i(LOG_TAG, "In onPause() dopo il salvataggio dei messaggi, mNumMessaggi = " + mNumMessaggi);
 
         if (messaggiNuovi.size() > 0)
-            mMessagesStore.saveMessagesList(messaggiNuovi);
+            mMessagesStore.saveMessagesList(mContactMacAddress, messaggiNuovi);
 
         mLocalBroadcastManager.unregisterReceiver(mMessagesReceiver);
 

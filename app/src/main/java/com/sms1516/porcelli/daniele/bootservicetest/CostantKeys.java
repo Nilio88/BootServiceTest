@@ -32,6 +32,9 @@ public interface CostantKeys {
     //Chiave costante utilizzata per l'intent che ha il compito di notificare, all'activity/fragment della conversazione, la disconnessione del contatto con cui si sta conversando
     String ACTION_CONTACT_DISCONNECTED = "com.sms1516.porcelli.daniele.wichat.action.CONTACT_DISCONNECTED";
 
+    //Chiave costante utilizzata per l'intent che informa l'activity dei contatti che la disconnessione richiesta è avvenuta con successo.
+    String ACTION_DISCONNECT_SUCCESSFUL = "com.sms1516.porcelli.daniele.wichat.action.DISCONNECT_SUCCESSFUL";
+
     //Chiave costante utilizzata per l'intent che invierà il messaggio appena ricevuto all'activity della conversazione
     String ACTION_SEND_MESSAGE = "com.sms1516.porcelli.daniele.wichat.action.SEND_MESSAGE";
 

@@ -34,6 +34,13 @@ public class MessagesStore {
     //Costante per il Log
     private static final String LOG_TAG = MessagesStore.class.getName();
 
+    //Costante per il nome della cartella dove verranno salvati i file di cronologia
+    //delle conversazioni.
+    private static final String HISTORY_FOLDER = "convhistory";
+
+    //Directory dove verranno salvati i file di cronologia delle conversazioni.
+    private File mHistoryPath;
+
     /**
      * Costruttore della classe.
      *
@@ -41,6 +48,12 @@ public class MessagesStore {
      */
     private MessagesStore(Context context) {
         this.context = context;
+
+        //Inizializza la direcotry dove verranno salvati i file di cronologia
+        mHistoryPath  = new File(context.getFilesDir(), HISTORY_FOLDER);
+        if (!mHistoryPath.exists()) {
+            mHistoryPath.mkdir();
+        }
     }
 
     /**
@@ -62,8 +75,8 @@ public class MessagesStore {
     public synchronized void saveMessage(Message message) {
         File messagesFile = null;
 
-        //Controlla se esiste già il file dove memorizzare il messaggio
-        File[] files = context.getFilesDir().listFiles();
+        //Controlla se il file è già presente nella direcotry.
+        File[] files = mHistoryPath.listFiles();
 
         //Scandisce i file presenti nella directory base dell'applicazione.
         //Se trova un file, controlla se il suo nome è simile all'indirizzo MAC
@@ -91,10 +104,9 @@ public class MessagesStore {
             //Il file che memorizza i messaggi provenienti dal mittente non è stato
             //trovato. Ne crea uno nuovo.
             try {
-                messagesFile = new File(context.getFilesDir(), message.getSender().replace(":", ""));
+                messagesFile = new File(mHistoryPath, message.getSender().replace(":", ""));
                 messagesFile.createNewFile();
-            }
-            catch (IOException ex) {
+            } catch (IOException ex) {
                 //Non è stato possibile creare il file
                 Log.e(LOG_TAG, "Impossibile creare il file: " + ex.toString());
                 ex.printStackTrace();
@@ -135,8 +147,7 @@ public class MessagesStore {
             } catch (IOException ex) {
                 Log.e(LOG_TAG, "Non è stato possiblie chiudere il file: " + ex.toString());
             }
-        }
-        else {
+        } else {
 
             //Salva il riferimento al file trovato.
             messagesFile = files[i];
@@ -184,13 +195,15 @@ public class MessagesStore {
      * Salva una lista di messaggi nella memoria interna.
      *
      * @param messageList La lista di messaggi da salvare.
+     * @param device L'indrizzo MAC del dispositivo remoto con cui sono stati scambiati i messaggi
+     *               nella lista.
      */
-    public synchronized void saveMessagesList(List<Message> messageList) {
+    public synchronized void saveMessagesList(String device, List<Message> messageList) {
         File messagesFile = null;
 
         //Controlla se esiste già il file dove memorizzare i messaggi presenti
         //nella lista.
-        File[] files = context.getFilesDir().listFiles();
+        File[] files = mHistoryPath.listFiles();
 
         //Scandisce i file presenti nella directory base dell'applicazione.
         //Se trova un file, controlla se il suo nome è simile all'indirizzo MAC
@@ -205,7 +218,7 @@ public class MessagesStore {
             if (files[i].isFile()) {
                 //Controlla se il nome del file è simile all'indirizzo MAC
                 //del mittente.
-                if (Utils.isMacSimilar(files[i].getName(), messageList.get(0).getSender().replace(":", ""))) {
+                if (Utils.isMacSimilar(files[i].getName(), device.replace(":", ""))) {
                     trovato = true;
                     break;
                 }
@@ -218,7 +231,7 @@ public class MessagesStore {
             //Il file che memorizza i messaggi provenienti dal mittente non è stato
             //trovato. Ne crea uno nuovo.
             try {
-                messagesFile = new File(context.getFilesDir(), messageList.get(0).getSender().replace(":", ""));
+                messagesFile = new File(mHistoryPath, device.replace(":", ""));
                 messagesFile.createNewFile();
             } catch (IOException ex) {
                 //Non è stato possibile creare il file
@@ -263,9 +276,7 @@ public class MessagesStore {
             } catch (IOException ex) {
                 Log.e(LOG_TAG, "Non è stato possiblie chiudere il file: " + ex.toString());
             }
-        }
-
-        else {
+        } else {
             //Ottieni il riferimento al file trovato.
             messagesFile = files[i];
 
@@ -330,7 +341,7 @@ public class MessagesStore {
         //memorizza i messaggi presenti in una lista che restituirà al metodo chiamate.
         //Se trova una directory, essa verrà ignorata. Se nessun file viene ritrovato,
         //verrà restituita una lista di messaggi vuota.
-        File[] files = context.getFilesDir().listFiles();
+        File[] files = mHistoryPath.listFiles();
 
         boolean trovato = false;
         int i;
@@ -347,13 +358,12 @@ public class MessagesStore {
         }
 
         if (!trovato) {
-            Log.i(LOG_TAG, "File "+ device.replace(":", "") + " non trovato.");
+            Log.i(LOG_TAG, "File " + device.replace(":", "") + " non trovato.");
 
             //Il file non è stato trovato. Restituisce una lista vuota.
             return messagesList;
 
-        }
-        else {
+        } else {
             //Ottieni il riferimento al file trovato.
             messagesFile = files[i];
             Log.i(LOG_TAG, "File cronologia trovato: " + messagesFile.getAbsolutePath());
@@ -410,7 +420,7 @@ public class MessagesStore {
         //del contatto di cui cancellare la cronologia dei messaggi e, se è simile,
         //lo cancella. Se trova una directory, essa verrà ignorata. Se nessun file viene
         //ritrovato, il metodo termina.
-        File[] files = context.getFilesDir().listFiles();
+        File[] files = mHistoryPath.listFiles();
 
         boolean trovato = false;
         int i;
@@ -427,12 +437,11 @@ public class MessagesStore {
         }
 
         if (!trovato) {
-            Log.i(LOG_TAG, "File "+ device.replace(":", "") + " non trovato.");
+            Log.i(LOG_TAG, "File " + device.replace(":", "") + " non trovato.");
 
             //Il file non è stato trovato.
 
-        }
-        else {
+        } else {
             //Cancella il file.
             if (files[i].delete())
                 Log.i(LOG_TAG, "Cronologia di " + device.replace(":", "") + " cancellata.");
@@ -457,7 +466,7 @@ public class MessagesStore {
         //del contatto di cui contare i messaggi della cronologia e, se è simile,
         //li conta e restituisce il numero dei messaggi trovati. Se trova una directory,
         //essa verrà ignorata. Se nessun file viene ritrovato, il metodo termina.
-        File[] files = context.getFilesDir().listFiles();
+        File[] files = mHistoryPath.listFiles();
 
         boolean trovato = false;
         int i;
@@ -474,12 +483,11 @@ public class MessagesStore {
         }
 
         if (!trovato) {
-            Log.i(LOG_TAG, "File "+ device.replace(":", "") + " non trovato.");
+            Log.i(LOG_TAG, "File " + device.replace(":", "") + " non trovato.");
 
             //Il file non è stato trovato.
             return numMessaggi;
-        }
-        else {
+        } else {
             messagesFile = files[i];
 
             //Conta quanti messaggi sono presenti nel file.
@@ -500,15 +508,13 @@ public class MessagesStore {
                 return numMessaggi;
             }
 
-            while(true) {
+            while (true) {
                 try {
                     ois.readObject();
                     numMessaggi++;
-                }
-                catch (OptionalDataException | ClassNotFoundException ex) {
+                } catch (OptionalDataException | ClassNotFoundException ex) {
                     Log.i(LOG_TAG, "Errore durante la conta dei messaggi nel file: " + ex.toString());
-                }
-                catch (IOException ex) {
+                } catch (IOException ex) {
                     Log.i(LOG_TAG, "Raggiunta la fine del file per la conta.");
                     break;
                 }
@@ -542,7 +548,7 @@ public class MessagesStore {
      * questo inconveniente, è necessario quindi realizzare una specializzazione di
      * ObjectOutputStream che non crei un nuovo header dopo l'apertura di un file
      * già esistente.
-     *
+     * <p/>
      * Fonte: http://stackoverflow.com/questions/1194656/appending-to-an-objectoutputstream
      */
     private class AppendingObjectOutputStream extends ObjectOutputStream {

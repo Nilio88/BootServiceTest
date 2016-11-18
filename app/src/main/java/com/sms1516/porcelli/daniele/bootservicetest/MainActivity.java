@@ -75,6 +75,7 @@ public class MainActivity extends AppCompatActivity {
         mIntentFilter.addAction(CostantKeys.ACTION_CONNECTION_RECEIVED);   //Copia e incolla questo
         mIntentFilter.addAction(CostantKeys.ACTION_CONTACT_CONNECTED);  //Copia e incolla questo
         mIntentFilter.addAction(CostantKeys.ACTION_CONNECTION_REFUSED); //Copia e incolla questo
+        mIntentFilter.addAction(CostantKeys.ACTION_DISCONNECT_SUCCESSFUL);  //Copia e incolla questo
 
         if (savedInstanceState != null) {
             //Recupero il nome, il numero dei messaggi non letti e l'indirizzo MAC del dispositivo rilevato.
@@ -357,7 +358,7 @@ public class MainActivity extends AppCompatActivity {
                 String nomeContatto = contactDetected.getText().toString();
 
                 //Avvio l'activity di conversazione.
-                openConversationActivity(commonView, nomeContatto, mac);
+                openConversationActivity(commonView, nomeContatto, connectedTo);
             }
 
             else if (action.equals(CostantKeys.ACTION_CONTACT_DISCONNECTED_FOR_CONTACTS)) {
@@ -454,6 +455,16 @@ public class MainActivity extends AppCompatActivity {
 
                 //Ritorna a cercare i dispositivi nelle vicinanze.
                 MyService.discoverServices(context);
+            }
+
+            else if (action.equals(CostantKeys.ACTION_DISCONNECT_SUCCESSFUL)) { //Copia e incolla questo else if
+
+                //Intent ricevuto dopo aver premuto su "Disconnetti" se la disconnessione
+                //è avvenuta con successo.
+                connectedTo = null;
+
+                //Inserisci qui il codice che vuoi per notificare la riuscita disconnessione.
+
             }
         }
     }

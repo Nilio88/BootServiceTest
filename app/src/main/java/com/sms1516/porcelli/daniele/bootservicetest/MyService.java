@@ -268,6 +268,11 @@ public class MyService extends Service {
                     public void onSuccess() {
                         Log.i(LOG_TAG, "Connessione Wi-Fi Direct chiusa.");
 
+                        //Invia l'intent di broadcast locale per informare l'activity dei contatti
+                        //della riuscita disconnessione.
+                        Intent disconnectSuccessIntent = new Intent(CostantKeys.ACTION_DISCONNECT_SUCCESSFUL);
+                        mLocalBroadcastManager.sendBroadcastSync(disconnectSuccessIntent);
+
                         //A quanto pare, per poter permettere di connettersi ad altri dispositivi
                         //dopo essersi disconnessi da quello precedente, c'è bisogno riavviare
                         //la ricerca dei servizi.
