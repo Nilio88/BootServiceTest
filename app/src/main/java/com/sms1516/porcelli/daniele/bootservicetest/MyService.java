@@ -4,7 +4,9 @@ import android.app.Service;
 import android.content.Intent;
 import android.os.IBinder;
 import android.os.Handler;
+import android.os.Looper;
 import android.content.Context;
+import android.os.SystemClock;
 import android.util.Log;
 import android.content.IntentFilter;
 import android.net.NetworkInfo;
@@ -70,6 +72,8 @@ public class MyService extends Service {
 
     private static final String ACTION_WHO_IS_CONNECTED = "com.sms1516.porcelli.daniele.wichat.action.WHO_IS_CONNECTED";
 
+    private static final String ACTION_CANCEL_CONNECT = "com.sms1516.porcelli.daniele.wichat.action.CANCEL_CONNECT";
+
     //Variabili d'istanza
     private WifiP2pManager mManager;
     private WifiP2pManager.Channel mChannel;
@@ -80,6 +84,7 @@ public class MyService extends Service {
     private InetAddress remoteDeviceIPAddress;  //Memorizzerà l'indirizzo IP del dispositivo remoto
     private Thread mNsdService;
     private Thread serverThread;
+    private Thread mHandlerThread;
     private ConnectThread connectThread;
     private boolean mContactsListener;
     private boolean mMessagesListener;
@@ -95,35 +100,23 @@ public class MyService extends Service {
     //Handler che elabora il messaggio REFUSED_WHAT ricevuto quando
     //il dispositivo remoto ci mette più di 30 secondi per accettare
     //la connessione con il nostro dispositivo tramite Wi-Fi Direct.
-    private Handler mHandler = new Handler() {
-
-        @Override
-        public void handleMessage(android.os.Message msg) {
-            switch(msg.what) {
-                case REFUSED_WHAT:
-
-                    //Manda un intent all'activity dei contatti che notifica
-                    //che il contatto non ha accettato la connessione Wi-Fi Direct
-                    //entro il tempo limite di 30 secondi.
-                    if (conversingWith == null && mContactsListener) {
-                        Log.i(LOG_TAG, "Il contatto non ha accettato la connessione.");
-                        mIRequested = false;
-                        Intent connectionRefusedIntent = new Intent(CostantKeys.ACTION_CONNECTION_REFUSED);
-                        mLocalBroadcastManager.sendBroadcast(connectionRefusedIntent);
-                    }
-            }
-        }
-    };
+    private Handler mHandler;
 
 
     @Override
     public void onCreate() {
         Log.i(LOG_TAG, "Sono in onCreate() di MyService");
 
+        //Inizializza il MessagesStore
+        Log.i(LOG_TAG, "Sto inizializzando il MessagesStore");
+        MessagesStore.initialize(this);
+        Log.i(LOG_TAG, "MessagesStore inizializzato.");
+
         mManager = (WifiP2pManager) getSystemService(Context.WIFI_P2P_SERVICE);
         mChannel = mManager.initialize(this, getMainLooper(), null);
         mLocalBroadcastManager = LocalBroadcastManager.getInstance(this);
         mMessagesStore = MessagesStore.getInstance();
+        mHandlerThread = new HandlerThread();
 
         //Crea l'intent filter per WifiP2pBroadCastReceiver
         mIntentFilter = new IntentFilter();
@@ -138,6 +131,8 @@ public class MyService extends Service {
         Log.i(LOG_TAG, "Sono in onStartCommand.");
 
         if (intent == null || intent.getAction() == null) {
+            mHandlerThread.start();
+
             Log.i(LOG_TAG, "Registro il WifiP2pBroadcastReceiver.");
             mReceiver = new WifiP2pBroadcastReceiver();
             registerReceiver(mReceiver, mIntentFilter);
@@ -165,14 +160,15 @@ public class MyService extends Service {
         else if (intent.getAction().equals(ACTION_CONNECT_TO_CLIENT)) {
             Log.i(LOG_TAG, "Mi sto connettendo con il dispositivo remoto.");
 
-            mIRequested = true;
-
             //Recupera l'indirizzo MAC del dispositivo a cui connettersi
             final String device = intent.getStringExtra(ACTION_CONNECT_TO_CLIENT_EXTRA);
 
             //Controlla che non ci sia già una connessione con un dispositivo remoto
             //Se non è stata trovata una connessione esistente con un dispositivo, la crea
-            if (conversingWith == null && remoteDeviceIPAddress == null) {
+            if (conversingWith == null) {
+
+                //Memorizzo lo stato che è stato questo dispositivo a richiedere la connessione.
+                mIRequested = true;
 
                 //Si connette con il dispositivo tramite Wi-Fi direct
                 WifiP2pConfig config = new WifiP2pConfig();
@@ -184,7 +180,7 @@ public class MyService extends Service {
                 Log.i(LOG_TAG, "Preparo il messaggio per l'handler.");
 
                 final android.os.Message refusedMessage = mHandler.obtainMessage(REFUSED_WHAT);
-                mHandler.sendMessageAtTime(refusedMessage, System.currentTimeMillis() + WIFI_DIRECT_CONNECTION_WAIT_TIME);
+                mHandler.sendMessageAtTime(refusedMessage, SystemClock.uptimeMillis() + WIFI_DIRECT_CONNECTION_WAIT_TIME);
                 Log.i(LOG_TAG, "Tra 30 secondi arriverà il messaggio all'handler.");
 
                 //Chiama il metodo di WifiP2pManager per stabilire una connessione Wi-Fi Direct con il dispositivo remoto.
@@ -339,7 +335,7 @@ public class MyService extends Service {
             //Controlla se la connessione con il contatto con cui si sta comunicando è ancora attiva,
             //quindi notifica l'activity/fragment del risultato.
             Intent contactAvailabilityIntent = new Intent(CostantKeys.ACTION_CONTACT_AVAILABILITY);
-            contactAvailabilityIntent.putExtra(CostantKeys.ACTION_CONTACT_AVAILABILITY_EXTRA, conversingWith == null);
+            contactAvailabilityIntent.putExtra(CostantKeys.ACTION_CONTACT_AVAILABILITY_EXTRA, conversingWith != null);
             mLocalBroadcastManager.sendBroadcast(contactAvailabilityIntent);
         }
 
@@ -366,6 +362,43 @@ public class MyService extends Service {
             Intent contactConnectedIntent = new Intent(CostantKeys.ACTION_CONTACT_CONNECTED);
             contactConnectedIntent.putExtra(CostantKeys.ACTION_CONTACT_CONNECTED_EXTRA, conversingWith);
             mLocalBroadcastManager.sendBroadcast(contactConnectedIntent);
+        }
+
+        else if (intent.getAction().equals(ACTION_CANCEL_CONNECT)) {
+
+            //Invoca il metodo della classe WifiP2pManager cancelConnect()
+            //per disdire la richiesta di connessione tramite Wi-Fi Direct con
+            //il dispositivo remoto.
+            Log.i(LOG_TAG, "Cancello la richiesta di connessione Wi-Fi Direct con il dispositivo remoto.");
+
+            mManager.cancelConnect(mChannel, new WifiP2pManager.ActionListener() {
+
+                @Override
+                public void onSuccess() {
+                    Log.i(LOG_TAG, "Richiesta di connessione cancellata con successo.");
+                    conversingWith = null;
+                    mIRequested = false;
+                }
+
+                @Override
+                public void onFailure(int reason) {
+
+                    String errore = null;
+                    switch (reason) {
+                        case WifiP2pManager.P2P_UNSUPPORTED:
+                            errore = "Wi-Fi P2P non supportato da questo dispositivo.";
+                            break;
+                        case WifiP2pManager.BUSY:
+                            errore = "sistema troppo occupato per elaborare la richiesta.";
+                            break;
+                        default:
+                            errore = "si è verificato un errore durante la registrazione del servizio WiChat.";
+                            break;
+                    }
+
+                    Log.i(LOG_TAG, "Non è stato possibile cancellare la richiesta di connessione: " + errore + ".");
+                }
+            });
         }
 
         return Service.START_STICKY;
@@ -575,7 +608,7 @@ public class MyService extends Service {
 
             //Avvia la ricerca dei dispositivi nelle vicinanze (a quanto pare, se il dispositivo non inizia la ricerca, esso stesso non può
             //essere rilevato dagli altri dispositivi).
-            discoverServices();
+            //discoverServices();
 
             //Avvia l'ascolto di connessioni in entrata
             //Nota: commentato perché è stato messo in un thread apposito
@@ -762,8 +795,11 @@ public class MyService extends Service {
                         //la ricerca dei servizi.
                         Log.i(LOG_TAG, "Riavvio la ricerca dei servizi.");
 
-                        discoverServices();
                     }
+                    //Ritorna a cercare i dispositivi nelle vicinanze, altrimenti
+                    //nessun altro dispositivo remoto si potrà connettere con quello
+                    //in uso.
+                    discoverServices();
 
                 }
             } else if (action.equals(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION)) {
@@ -1261,6 +1297,39 @@ public class MyService extends Service {
         }
     }
 
+    private class HandlerThread extends Thread {
+
+        @Override
+        public void run() {
+            Looper.prepare();
+
+            mHandler = new Handler () {
+
+                @Override
+                public void handleMessage(android.os.Message msg) {
+                    switch(msg.what) {
+                        case REFUSED_WHAT:
+
+                            //Manda un intent all'activity dei contatti che notifica
+                            //che il contatto non ha accettato la connessione Wi-Fi Direct
+                            //entro il tempo limite di 30 secondi.
+                            Log.i(LOG_TAG, "Sono nell'handler.");
+
+                            if (currentConnection == null && mContactsListener) {
+                                Log.i(LOG_TAG, "Il contatto non ha accettato la connessione.");
+                                mIRequested = false;
+                                Intent connectionRefusedIntent = new Intent(CostantKeys.ACTION_CONNECTION_REFUSED);
+                                mLocalBroadcastManager.sendBroadcastSync(connectionRefusedIntent);
+                                Log.i(LOG_TAG, "Intent ACTION_CONNECTION_REFUSED inviato.");
+                            }
+                            conversingWith = null;
+                    }
+                }
+            };
+            Looper.loop();
+        }
+    }
+
     public static void registerContactsListener(Context context) {
         Intent registerContactsListenerIntent = new Intent(context, MyService.class);
         registerContactsListenerIntent.setAction(ACTION_REGISTER_CONTACTS_LISTENER);
@@ -1361,5 +1430,17 @@ public class MyService extends Service {
         Intent whoIsConnectedIntent = new Intent(context, MyService.class);
         whoIsConnectedIntent.setAction(ACTION_WHO_IS_CONNECTED);
         context.startService(whoIsConnectedIntent);
+    }
+
+    /**
+     * Metodo statico invocato dall'activity dei contatti per cancellare
+     * la richiesta di connessione Wi-Fi Direct con il dispositivo remoto.
+     *
+     * @param context Un'istanza di Context utilizzata per invocare il metodo startService().
+     */
+    public static void cancelConnect(Context context) {
+        Intent cancelConnectIntent = new Intent(context, MyService.class);
+        cancelConnectIntent.setAction(ACTION_CANCEL_CONNECT);
+        context.startService(cancelConnectIntent);
     }
 }

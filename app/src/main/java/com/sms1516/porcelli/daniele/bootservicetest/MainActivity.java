@@ -74,6 +74,7 @@ public class MainActivity extends AppCompatActivity {
         mIntentFilter.addAction(CostantKeys.ACTION_SEND_DISCONNECT_REQUEST);    //Copia e incolla questo
         mIntentFilter.addAction(CostantKeys.ACTION_CONNECTION_RECEIVED);   //Copia e incolla questo
         mIntentFilter.addAction(CostantKeys.ACTION_CONTACT_CONNECTED);  //Copia e incolla questo
+        mIntentFilter.addAction(CostantKeys.ACTION_CONNECTION_REFUSED); //Copia e incolla questo
 
         if (savedInstanceState != null) {
             //Recupero il nome, il numero dei messaggi non letti e l'indirizzo MAC del dispositivo rilevato.
@@ -190,6 +191,8 @@ public class MainActivity extends AppCompatActivity {
         mNumMessaggi = 0;
         mNuoviMessaggi.setText("");
 
+        Log.i(LOG_TAG, "Indirizzo MAC che si sta passando alla ConversationActivity: " + indirizzoMAC);
+
         //Crea l'intent per avviare l'activity di conversazione
         Intent intent = new Intent(this, ConversationActivity.class);
         intent.putExtra(CostantKeys.ACTION_START_CONVERSATION_ACTIVITY_EXTRA_NAME, nomeContatto);
@@ -252,6 +255,13 @@ public class MainActivity extends AppCompatActivity {
         if (macAddress != null) {
             Log.i(LOG_TAG, "Premuto tasto per la cancellazione della cronologia dei messaggi.");
             MyService.deleteMessages(this, macAddress);
+
+            //Cancella il numero di messaggi ricevuti dal contatto e letti dalle
+            //Shared Preferences.
+            SharedPreferences.Editor editor = mMessagesReceivedPrefs.edit();
+            editor.putInt(macAddress, 0);
+            Log.i(LOG_TAG, "Sto cancellando il numero dei messaggi letti dalle shared preferences sotto la chiave: " + macAddress);
+            editor.apply();
         }
     }
 
@@ -281,9 +291,16 @@ public class MainActivity extends AppCompatActivity {
                 }
 
                 //Controlla se ci sono messaggi ricevuti da questo contatto ma non ancora letti.
+                Log.i(LOG_TAG, "Recupero i messaggi ricevuti e letti nelle shared preferences sotto la chiave: " + device.deviceAddress);
+
                 int numMessaggi = mMessagesReceivedPrefs.getInt(device.deviceAddress, 0);
+                Log.i(LOG_TAG, "Numero di messaggi ricevuti da questo contatto e letti: " + numMessaggi);
+
                 int messaggiCronologia = mMessagesStore.getMessagesCount(device.deviceAddress);
+                Log.i(LOG_TAG, "Numero di messaggi presenti nel messagesStore per questo contatto: " + messaggiCronologia);
+
                 int nuoviMessaggi = messaggiCronologia - numMessaggi;
+                Log.i(LOG_TAG, "Messaggi non ancora letti da questo contatto: " + nuoviMessaggi);
 
                 if (nuoviMessaggi > 0)
                     mNuoviMessaggi.setText(" (" + nuoviMessaggi + ")");
@@ -326,8 +343,12 @@ public class MainActivity extends AppCompatActivity {
                 //Memorizza ogni risultato che ottieni dal confronto con ciascun indirizzo MAC
                 //nella recyclerView e indica come contatto connesso quello che ha ottenuto il
                 //risultato più basso.
-                mConnesso.setText(" (Connesso)");
-                connectedTo = mac;
+                //Poiché io visualizzo solo il contatto rilevato più di recente, mi arrangio con
+                //la funzione Utils.isMacSimilar().
+                if (Utils.isMacSimilar(mac, macAddress)) {
+                    mConnesso.setText(" (Connesso)");
+                    connectedTo = macAddress;
+                }
 
                 //Inserisci qui il codice per ottenere il nome del contatto e la sua View
                 //dalla recyclerView sfruttando l'indirizzo MAC appena estratto dall'intent
@@ -407,7 +428,10 @@ public class MainActivity extends AppCompatActivity {
                 //rilevato più di recente).
                 if (Utils.isMacSimilar(remoteDevice, macAddress)) {
                     mConnesso.setText(" (Connesso)");
-                    connectedTo = remoteDevice;
+
+                    //Attenzione: imposta sempre l'indirizzo MAC del contatto ottenuto dalla recyclerView.
+                    //Non mettere quello memorizzato nell'intent!
+                    connectedTo = macAddress;
                 }
             }
 
@@ -425,7 +449,11 @@ public class MainActivity extends AppCompatActivity {
                 //di connessione Wi-Fi Direct. Avvisa l'utente.
                 //Inserisci qui il codice che interrompe la progress bar e visualizza il messaggio
                 //che comunica il rifiuto della connessione (preferibilmente in una dialogue).
+                Log.i(LOG_TAG, "Ho ricevuto l'intent ACTION_CONNECTION_REFUSED.");
                 Toast.makeText(context, "Connessione rifiutata.", Toast.LENGTH_SHORT).show();
+
+                //Ritorna a cercare i dispositivi nelle vicinanze.
+                MyService.discoverServices(context);
             }
         }
     }

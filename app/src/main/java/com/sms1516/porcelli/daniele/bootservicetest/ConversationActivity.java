@@ -64,6 +64,7 @@ public class ConversationActivity extends AppCompatActivity {
             Intent intent = getIntent();
             contactNameTv.setText(intent.getCharSequenceExtra(CostantKeys.ACTION_START_CONVERSATION_ACTIVITY_EXTRA_NAME));
             mContactMacAddress = (String) intent.getCharSequenceExtra(CostantKeys.ACTION_START_CONVERSATION_ACTIVITY_EXTRA_MAC);
+            Log.i(LOG_TAG, "Indirizzo MAC ottenuto dalla MainActivity: " + mContactMacAddress);
 
             //Recupera l'indirizzo MAC di questo dispositivo per inserirlo nei messaggi che invierà
             Log.i(LOG_TAG, "Recupero l'indirizzo MAC del dispositivo.");
@@ -229,8 +230,11 @@ public class ConversationActivity extends AppCompatActivity {
                 //Così come per ACTION_CONTACT_DISCONNECTED, vedi un po' cosa fare.
                 //Ancora una volta, chiudere l'activity/fragment può essere una soluzione ma è
                 //alquanto brusca...
-                if (!connesso)
+                if (!connesso) {
+                    Log.i(LOG_TAG, "Il contatto non è più connesso.");
                     finish();
+                }
+
             }
         }
     }
