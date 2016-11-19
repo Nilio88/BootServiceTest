@@ -113,7 +113,14 @@ public class MyService extends Service {
         Log.i(LOG_TAG, "MessagesStore inizializzato.");
 
         mManager = (WifiP2pManager) getSystemService(Context.WIFI_P2P_SERVICE);
-        mChannel = mManager.initialize(this, getMainLooper(), null);
+        mChannel = mManager.initialize(this, getMainLooper(), new WifiP2pManager.ChannelListener() {
+
+            @Override
+            public void onChannelDisconnected() {
+
+                Log.e(LOG_TAG, "Attenzione: il canale si è disconnesso!");
+            }
+        });
         mLocalBroadcastManager = LocalBroadcastManager.getInstance(this);
         mMessagesStore = MessagesStore.getInstance();
         mHandlerThread = new HandlerThread();
@@ -149,7 +156,10 @@ public class MyService extends Service {
         else if (intent.getAction().equals(ACTION_DISCOVER_SERVICES)) {
 
             //Semplicemente chiama il metodo privato per la ricerca dei dispositivi nelle vicinanze
-            discoverServices();
+            if (conversingWith == null)
+                discoverServices();
+            else
+                refreshServices();
         }
 
         else if (intent.getAction().equals(ACTION_UNREGISTER_CONTACTS_LISTENER)) {
@@ -450,6 +460,39 @@ public class MyService extends Service {
                 Log.e(LOG_TAG, "Impossibile ottenere le informazioni di connessione: AddServiceRequest failed");
             }
         });
+
+        //Avvia la ricerca di dispositivi nelle vicinanze con lo stesso servizio WiChat
+        mManager.discoverServices(mChannel, new WifiP2pManager.ActionListener() {
+            @Override
+            public void onSuccess() {
+                //Tutto bene. Nulla da fare.
+                Log.i(LOG_TAG, "Ricerca dispositivi avviata.");
+            }
+
+            @Override
+            public void onFailure(int reason) {
+
+                //Si è verificato un errore. Esso verrà registrato nel Log.
+                String errore = null;
+                switch (reason) {
+                    case WifiP2pManager.P2P_UNSUPPORTED:
+                        errore = "Wi-Fi P2P non supportato da questo dispositivo.";
+                        break;
+                    case WifiP2pManager.BUSY:
+                        errore = "sistema troppo occupato per elaborare la richiesta.";
+                        break;
+                    default:
+                        errore = "si è verificato un errore durante la registrazione del servizio WiChat.";
+                        break;
+                }
+
+                Log.e(LOG_TAG, "Impossibile iniziare la ricerca dei peers: " + errore);
+            }
+        });
+    }
+
+    private void refreshServices() {
+        Log.i(LOG_TAG, "Eseguo solo il refresh dei servizi.");
 
         //Avvia la ricerca di dispositivi nelle vicinanze con lo stesso servizio WiChat
         mManager.discoverServices(mChannel, new WifiP2pManager.ActionListener() {
@@ -1195,8 +1238,6 @@ public class MyService extends Service {
                         //Manda l'intent che avvia l'activity/fragment di conversazione.
                         Log.i(LOG_TAG, "Invio l'intent che avvia la conversazione.");
 
-                        mIRequested = false;
-
                         Intent connectedIntent = new Intent(CostantKeys.ACTION_CONNECTED_TO_DEVICE);
                         connectedIntent.putExtra(CostantKeys.ACTION_CONNECTED_TO_DEVICE_EXTRA, conversingWith);
                         mLocalBroadcastManager.sendBroadcast(connectedIntent);
@@ -1221,6 +1262,15 @@ public class MyService extends Service {
                     intent.putExtra(CostantKeys.ACTION_CONTACT_NOT_AVAILABLE_EXTRA, conversingWith);
                     mLocalBroadcastManager.sendBroadcast(intent);
                 }
+            }
+
+            finally {
+                mIRequested = false;
+                Log.i(LOG_TAG, "mIRequested impostato a false.");
+
+                //Riavvia la ricerca dei dispositivi per poter essere nuovamente rilevato
+                //dopo la connessione.
+                refreshServices();
             }
         }
     }
@@ -1269,8 +1319,6 @@ public class MyService extends Service {
                         //Invia l'intent per l'avvio dell'activity/fragment per la conversazione.
                         Log.i(LOG_TAG, "Invio l'intent per l'avvio dell'activity/fragment della conversazione.");
 
-                        mIRequested = false;
-
                         Intent connectedIntent = new Intent(CostantKeys.ACTION_CONNECTED_TO_DEVICE);
                         connectedIntent.putExtra(CostantKeys.ACTION_CONNECTED_TO_DEVICE_EXTRA, conversingWith);
                         mLocalBroadcastManager.sendBroadcast(connectedIntent);
@@ -1298,6 +1346,13 @@ public class MyService extends Service {
             catch(IOException ex) {
                 //Niente di importante da fare.
             }
+
+            mIRequested = false;
+            Log.i(LOG_TAG, "mIRequested impostato a false.");
+
+            //Riavvia la ricerca dei dispositivi per poter essere nuovamente rilevato
+            //dopo la connessione.
+            refreshServices();
 
         }
     }

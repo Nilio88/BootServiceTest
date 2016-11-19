@@ -172,9 +172,20 @@ public class MainActivity extends AppCompatActivity {
                 //e di impostare a null la variabile macAddress).
                 contactDetected.setText("Non c'è nessuno");
                 macAddress = null;
+                mConnesso.setText("");
 
                 //Avvia la ricerca dei nuovi contatti
                 MyService.discoverServices(this);
+                return true;
+
+            case R.id.refresh_service:
+                //Riavvia il Service. Questo è necessario
+                //poiché le API su cui si basa l'app
+                //(WifiP2pManager) non sono completamente
+                //affidabili (contengono bug).
+                stopService(new Intent(MainActivity.this, MyService.class));
+                startService(new Intent(MainActivity.this, MyService.class));
+                return true;
 
             default:
                 return super.onOptionsItemSelected(item);

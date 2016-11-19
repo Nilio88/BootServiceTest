@@ -11,5 +11,9 @@
         android:icon="@drawable/ic_refresh_white_18dp"
         android:title="Aggiorna contatti"
         app:showAsAction="always" />
+    <item
+        android:id="@+id/refresh_service"
+        android:title="Riavvia Service"
+        app:showAsAction="never" />
 
 </menu>
