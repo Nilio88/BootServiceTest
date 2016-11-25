@@ -11,8 +11,6 @@ import android.util.Log;
 import android.content.IntentFilter;
 import android.net.NetworkInfo;
 import android.net.wifi.WpsInfo;
-import android.net.wifi.WifiInfo;
-import android.net.wifi.WifiManager;
 import android.net.wifi.p2p.WifiP2pConfig;
 import android.net.wifi.p2p.WifiP2pInfo;
 import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceInfo;
@@ -89,7 +87,6 @@ public class MyService extends Service {
     private boolean mContactsListener;
     private boolean mMessagesListener;
     private boolean mIRequested;    //Memorizzerà lo stato che indica se è stato l'utente a richiedere la connessione oppure no.
-    private String thisDeviceAddress;
     private ChatConnection currentConnection;
     private MessagesStore mMessagesStore;
 
@@ -393,6 +390,7 @@ public class MyService extends Service {
                     Log.i(LOG_TAG, "Richiesta di connessione cancellata con successo.");
                     conversingWith = null;
                     mIRequested = false;
+                    mHandler.removeCallbacksAndMessages(null);
                 }
 
                 @Override
@@ -422,6 +420,12 @@ public class MyService extends Service {
     @Override
     public IBinder onBind(Intent intent) {
         return null;
+    }
+
+    @Override
+    public void onDestroy() {
+
+        unregisterReceiver(mReceiver);
     }
 
     /**
@@ -536,12 +540,9 @@ public class MyService extends Service {
 
         //Costanti che fungono da chiavi per il TXT record
         private static final String NICKNAME = "nickname";
-        private static final String LISTEN_PORT = "listenport";
 
         //Costante del nome del servizio
         private static final String SERVICE_NAME = "WiChat";
-
-        ServerSocket server;
 
         //Implementazione del listener dei TXT record
         private final WifiP2pManager.DnsSdTxtRecordListener txtRecordListener = new WifiP2pManager.DnsSdTxtRecordListener() {
@@ -600,18 +601,11 @@ public class MyService extends Service {
 
             //Log.i(LOG_TAG, "Indirizzo IP di questo dispositivo: " + server.getInetAddress().toString());
 
-            //Recupera l'indirizzo MAC di questo dispositivo per inserirlo nei messaggi che invierà
-            Log.i(LOG_TAG, "Recupero l'indirizzo MAC del dispositivo.");
-
-            WifiManager wifiManager = (WifiManager) getSystemService(Context.WIFI_SERVICE);
-            WifiInfo info = wifiManager.getConnectionInfo();
-            thisDeviceAddress = info.getMacAddress().toLowerCase();
-            Log.i(LOG_TAG, "Indirizzo MAC di questo dispositivo nel Service: " + thisDeviceAddress);
-
             //Ottiene il nome del proprietario di questo dispositivo Android
             Cursor cursor = getContentResolver().query(Profile.CONTENT_URI, null, null, null, null);
             cursor.moveToFirst();
             String proprietario = cursor.getString(cursor.getColumnIndex("display_name"));
+            cursor.close();
 
             Log.i(LOG_TAG, "Nome proprietario del dispositivo: " + proprietario);
 
@@ -772,12 +766,12 @@ public class MyService extends Service {
                     //Nel caso il Wi-Fi è stato disattivato, interrompi il thread del NSD
                     Log.i(LOG_TAG, "Il Wi-Fi P2P è stato disabilitato su questo dispositivo.");
 
-                    if (mNsdService != null && !mNsdService.isInterrupted()) {
+                    if (mNsdService != null && mNsdService.isAlive()) {
                         mNsdService.interrupt();
                     }
 
                     //Interrompe il serverThread
-                    if (serverThread != null && !serverThread.isInterrupted())
+                    if (serverThread != null && serverThread.isAlive())
                         serverThread.interrupt();
                 }
             } else if (action.equals(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION)) {
@@ -881,6 +875,8 @@ public class MyService extends Service {
          * Costruttore invocato dal server.
          *
          * @param socket Il socket che gestisce la connessione trai due dispositivi
+         * @throws IOException se i costruttori dei thread non sono riusciti ad ottenere gli stream
+         * di input ed output.
          */
         public ChatConnection(Socket socket) throws IOException {
             Log.i(LOG_TAG, "Sono nel costruttore di ChatConnection per le connessioni ricevute.");
@@ -912,6 +908,7 @@ public class MyService extends Service {
          * Costruttore invocato quando si vuole instaurare una
          * connessione con il server del dispositivo remoto.
          *
+         * @Throws IOException se la socket non è riuscita a connettersi.
          */
         public ChatConnection(/*InetAddress srvAddress, int srvPort, String macAddress*/) throws IOException {
             Log.i(LOG_TAG, "Sono nel costruttore di ChatConnection per le connessioni da effetturare.");
@@ -1225,7 +1222,8 @@ public class MyService extends Service {
                 Log.i(LOG_TAG, "Connessione con il dispositivo remoto riuscita.");
 
                 //Ottieni l'indirizzo MAC del dispositivo remoto se non è ancora
-                //stato impostato (questo dispositivo ha ricevuto una richiesta di conversazione).
+                //stato impostato (questo dispositivo ha ricevuto una richiesta di conversazione e
+                //non è il group owner).
                 if (conversingWith == null)
                     conversingWith = Utils.getMac(remoteDeviceIPAddress.getHostAddress());
 
@@ -1305,7 +1303,7 @@ public class MyService extends Service {
 
                 //Recupera l'indirizzo MAC del dispositivo remoto se non
                 //è stato impostato ancora (quando si riceve una richiesta
-                //di connessione).
+                //di connessione e si è il group owner).
                 if (conversingWith == null) {
 
                     conversingWith = Utils.getMac(remoteDeviceIPAddress.getHostAddress());
@@ -1375,14 +1373,19 @@ public class MyService extends Service {
                             //entro il tempo limite di 30 secondi.
                             Log.i(LOG_TAG, "Sono nell'handler.");
 
-                            if (currentConnection == null && mContactsListener) {
+                            if (currentConnection == null) {
                                 Log.i(LOG_TAG, "Il contatto non ha accettato la connessione.");
                                 mIRequested = false;
-                                Intent connectionRefusedIntent = new Intent(CostantKeys.ACTION_CONNECTION_REFUSED);
-                                mLocalBroadcastManager.sendBroadcastSync(connectionRefusedIntent);
-                                Log.i(LOG_TAG, "Intent ACTION_CONNECTION_REFUSED inviato.");
+                                conversingWith = null;
+
+                                if (mContactsListener) {
+                                    //Invia all'activity dei contatti l'intent che notifica che
+                                    //il contatto ha rifiutato la connessione.
+                                    Intent connectionRefusedIntent = new Intent(CostantKeys.ACTION_CONNECTION_REFUSED);
+                                    mLocalBroadcastManager.sendBroadcast(connectionRefusedIntent);
+                                    Log.i(LOG_TAG, "Intent ACTION_CONNECTION_REFUSED inviato.");
+                                }
                             }
-                            conversingWith = null;
                     }
                 }
             };

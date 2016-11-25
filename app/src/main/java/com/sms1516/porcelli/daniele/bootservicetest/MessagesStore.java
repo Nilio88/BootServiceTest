@@ -12,7 +12,6 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.OptionalDataException;
 import java.io.OutputStream;
-import java.io.StreamCorruptedException;
 import java.util.List;
 import java.util.LinkedList;
 
