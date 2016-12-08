@@ -300,6 +300,8 @@ public class MainActivity extends AppCompatActivity {
                     //Segnala che il dispositivo remoto appena rilevato è già connesso
                     //con quello nostro.
                     mConnesso.setText(" (Connesso)");
+
+                    connectedTo = device.deviceAddress;
                 }
 
                 //Controlla se ci sono messaggi ricevuti da questo contatto ma non ancora letti.
