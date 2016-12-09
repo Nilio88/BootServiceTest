@@ -301,6 +301,9 @@ public class MainActivity extends AppCompatActivity {
                     //con quello nostro.
                     mConnesso.setText(" (Connesso)");
 
+                    //Assegna a connectedTo l'indirizzo MAC del dispositivo già connesso.
+                    //Questo permette rappresentare il dispositivo remoto con l'indirizzo MAC
+                    //rilevato dal NSD.
                     connectedTo = device.deviceAddress;
                 }
 
